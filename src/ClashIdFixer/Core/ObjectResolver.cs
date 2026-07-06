@@ -2,136 +2,91 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Navisworks.Api;
-using ClashIdFixer.Config;
 
 namespace ClashIdFixer.Core
 {
     /// <summary>
-    /// Result of resolving a clash-result ModelItem (which normally points at a
-    /// leaf geometry sub-object) up to "the real object" - the composite-object
-    /// level that has a proper "Item" property tab (shown as "Объект" in the
-    /// Russian UI) and that other tools (e.g. Signal's parameter export) key off
-    /// when the user does a normal (single-click) selection in Navisworks.
+    /// Finds "the real object" for a clash-result item: clash results point at a
+    /// leaf geometry sub-object, while the object the user actually works with
+    /// (the one whose properties show the "Объект"/Item tab, and the one Signal's
+    /// parameter export keys off) is the composite-object level above it.
     /// </summary>
-    public sealed class ResolvedObject
-    {
-        public ModelItem OriginalItem;
-        public ModelItem ResolvedItem;
-        public bool WasResolved;
-        public string ResolvedNodeType;
-    }
-
     public static class ObjectResolver
     {
-        // These are internal (language-independent) Navisworks property keys, not
-        // localized display text, so this works the same in a Russian-language
-        // Navisworks UI as in an English one.
+        // Internal (language-independent) Navisworks property keys - NOT localized
+        // display text, so they read the same under a Russian UI.
         private const string NodeTypeCategoryName = "LcOaNode";
         private const string NodeTypePropertyName = "LcOaNodeIcon";
 
         /// <summary>
-        /// Returns the internal Navisworks node-type name for an item, e.g.
-        /// "File", "Layer", "Collection", "Insert Group", "Composite Object", "Geometry".
-        /// Returns null if it cannot be determined.
+        /// Walks from the item up through its parents and returns the nearest one
+        /// that is an "object level" node, or null when there is none (e.g. plain
+        /// AutoCAD geometry directly under a layer).
         /// </summary>
-        public static string GetNodeTypeName(ModelItem item)
+        public static ModelItem FindObjectLevel(ModelItem item, IList<string> fallbackNodeTypes)
         {
-            if (item == null) return null;
-            try
+            for (var current = item; current != null; current = current.Parent)
             {
-                var prop = item.PropertyCategories.FindPropertyByName(NodeTypeCategoryName, NodeTypePropertyName);
-                if (prop == null) return null;
-                return prop.Value.ToNamedConstant().DisplayName;
+                if (IsObjectLevel(current, fallbackNodeTypes))
+                    return current;
             }
-            catch
-            {
-                return null;
-            }
+            return null;
         }
 
         /// <summary>
-        /// Walks from <paramref name="clashItem"/> up through its ancestors (including
-        /// itself) and returns the closest one whose node type is in
-        /// <paramref name="acceptedNodeTypes"/>. Falls back to the original item
-        /// (WasResolved = false) if nothing matched, so callers always get something
-        /// usable and can flag unresolved rows instead of the export silently
-        /// swallowing them.
+        /// Primary check is ModelItem.IsComposite - a real API flag, immune to UI
+        /// localization (comparing localized node-type names against English text
+        /// is exactly the bug that produced "0 resolved" on a Russian install).
+        /// The node-icon name comparison stays only as a configurable fallback for
+        /// exotic files where the composite flag is not set.
         /// </summary>
-        public static ResolvedObject ResolveObject(ModelItem clashItem, IList<string> acceptedNodeTypes)
+        public static bool IsObjectLevel(ModelItem item, IList<string> fallbackNodeTypes)
         {
-            var result = new ResolvedObject { OriginalItem = clashItem };
-
-            if (clashItem != null)
-            {
-                foreach (ModelItem candidate in clashItem.AncestorsAndSelf)
-                {
-                    string nodeType = GetNodeTypeName(candidate);
-                    if (nodeType != null && acceptedNodeTypes.Any(t => string.Equals(t, nodeType, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        result.ResolvedItem = candidate;
-                        result.ResolvedNodeType = nodeType;
-                        result.WasResolved = true;
-                        return result;
-                    }
-                }
-            }
-
-            result.ResolvedItem = clashItem;
-            result.WasResolved = false;
-            return result;
-        }
-
-        /// <summary>Navisworks' own stable per-object GUID (ModelItem.InstanceGuid).</summary>
-        public static string GetInstanceGuid(ModelItem item)
-        {
-            if (item == null) return null;
             try
             {
-                return item.InstanceGuid.ToString();
+                if (item.IsComposite) return true;
             }
             catch
             {
-                return null;
             }
+
+            if (fallbackNodeTypes == null || fallbackNodeTypes.Count == 0) return false;
+
+            foreach (var name in GetNodeTypeNames(item))
+            {
+                if (fallbackNodeTypes.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
-        /// Tries each configured (category, property) pair against the item's
-        /// property categories and returns every one that actually resolved to a
-        /// non-empty value. All of them are written to the export so the user can
-        /// see which candidate matched their model without recompiling anything.
+        /// All known spellings of the item's node type: the (possibly localized)
+        /// display name of the LcOaNodeIcon constant plus its raw ToString form.
         /// </summary>
-        public static IEnumerable<KeyValuePair<string, string>> ExtractIdCandidates(
-            ModelItem item, IEnumerable<IdCandidate> candidates)
+        private static IEnumerable<string> GetNodeTypeNames(ModelItem item)
         {
             if (item == null) yield break;
 
-            foreach (var c in candidates)
+            NamedConstant constant = null;
+            try
             {
-                DataProperty prop = null;
-                try
-                {
-                    prop = item.PropertyCategories.FindPropertyByDisplayName(c.Category, c.Property);
-                }
-                catch
-                {
-                    // Category/property not present on this item - just skip it.
-                }
-
-                if (prop == null) continue;
-
-                string value = null;
-                try
-                {
-                    value = prop.Value.ToDisplayString();
-                }
-                catch
-                {
-                }
-
-                if (!string.IsNullOrEmpty(value))
-                    yield return new KeyValuePair<string, string>(c.Key, value);
+                var prop = item.PropertyCategories.FindPropertyByName(NodeTypeCategoryName, NodeTypePropertyName);
+                if (prop != null) constant = prop.Value.ToNamedConstant();
             }
+            catch
+            {
+            }
+
+            if (constant == null) yield break;
+
+            string displayName = null;
+            try { displayName = constant.DisplayName; } catch { }
+            if (!string.IsNullOrEmpty(displayName)) yield return displayName;
+
+            string raw = null;
+            try { raw = constant.ToString(); } catch { }
+            if (!string.IsNullOrEmpty(raw) && raw != displayName) yield return raw;
         }
     }
 }

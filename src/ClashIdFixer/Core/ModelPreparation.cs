@@ -4,20 +4,30 @@ using System.Linq;
 using System.Reflection;
 using Autodesk.Navisworks.Api;
 using Autodesk.Navisworks.Api.Clash;
+using Autodesk.Navisworks.Api.DocumentParts;
 
 namespace ClashIdFixer.Core
 {
     /// <summary>
-    /// The "mandatory procedures" the user wants enforced before every export:
-    /// show everything, hide the stuff that should not be clash-checked, then
-    /// (elsewhere) recompute the clash tests. Every step logs what it did so a
-    /// failure here is visible instead of silently producing a stale/incomplete
-    /// export.
+    /// The mandatory pre-report procedures: show everything, hide the items that
+    /// must not be clash-checked, recompute the clash tests. Every step logs what
+    /// it did so a failure is visible instead of silently producing a stale or
+    /// incomplete report.
     /// </summary>
     public static class ModelPreparation
     {
         public static void ShowAll(Document document, List<string> log)
         {
+            // One native call that un-hides the whole scene - much faster than
+            // collecting hundreds of thousands of descendants into a collection.
+            var resetAllHidden = typeof(DocumentModels).GetMethod("ResetAllHidden", Type.EmptyTypes);
+            if (resetAllHidden != null)
+            {
+                resetAllHidden.Invoke(document.Models, null);
+                log.Add("Показаны все элементы.");
+                return;
+            }
+
             var all = new ModelItemCollection();
             foreach (Model model in document.Models)
             {
@@ -25,7 +35,6 @@ namespace ClashIdFixer.Core
                 all.Add(model.RootItem);
                 all.AddRange(model.RootItem.Descendants);
             }
-
             document.Models.SetHidden(all, false);
             log.Add(string.Format("Показаны все элементы ({0} шт.).", all.Count));
         }
@@ -39,7 +48,7 @@ namespace ClashIdFixer.Core
         {
             if (string.IsNullOrWhiteSpace(setName))
             {
-                log.Add("Скрытие непроверяемых элементов пропущено (имя набора не задано).");
+                log.Add("Скрытие непроверяемых элементов пропущено (имя набора не задано в ClashIdFixer.config.xml).");
                 return;
             }
 
@@ -136,7 +145,7 @@ namespace ClashIdFixer.Core
 
             if (ReflectionHelpers.TryRunAllTests(testsData))
             {
-                log.Add("Все проверки на коллизии пересчитаны (RunAllTests).");
+                log.Add("Все проверки на коллизии пересчитаны.");
                 return;
             }
 
@@ -155,7 +164,7 @@ namespace ClashIdFixer.Core
                 log.Add(string.Format(
                     "Пересчитано проверок: {0}, не удалось пересчитать: {1} " +
                     "(нужный метод не найден в установленной версии API - см. ReflectionHelpers.cs). " +
-                    "Обновите проверки вручную в Clash Detective перед экспортом.", ok, failed));
+                    "Обновите проверки вручную в Clash Detective.", ok, failed));
         }
     }
 }

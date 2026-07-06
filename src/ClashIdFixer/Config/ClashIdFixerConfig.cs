@@ -8,61 +8,34 @@ using System.Xml.Linq;
 namespace ClashIdFixer.Config
 {
     /// <summary>
-    /// One candidate property to try when looking for the "real" element id
-    /// (GUID, Element Id, Entity Handle, etc.) on the resolved object.
-    /// </summary>
-    public struct IdCandidate
-    {
-        public string Category;
-        public string Property;
-
-        public IdCandidate(string category, string property)
-        {
-            Category = category;
-            Property = property;
-        }
-
-        public string Key
-        {
-            get { return Category + "::" + Property; }
-        }
-    }
-
-    /// <summary>
-    /// All settings for the exporter. Loaded from ClashIdFixer.config.xml next to the
-    /// plugin DLL. A default file is written out the first time nothing is found, so
-    /// the user always has something to edit instead of hunting through source code.
+    /// Settings, loaded from ClashIdFixer.config.xml next to the plugin DLL.
+    /// A default file is written out the first time nothing is found, so the user
+    /// always has something to edit instead of hunting through source code.
     /// </summary>
     public sealed class ClashIdFixerConfig
     {
+        /// <summary>Empty = the user's Downloads folder.</summary>
         public string OutputFolder = "";
 
-        // Navisworks internal node "icon" types (LcOaNode/LcOaNodeIcon) that are
-        // considered "the real object" (the level that has the Item/"Объект" tab).
-        // "Composite Object" is the normal case. "Insert Group" is included as a
-        // fallback for files where the composite level is missing.
-        public List<string> ObjectNodeTypes = new List<string> { "Composite Object", "Insert Group" };
-
-        public List<IdCandidate> IdCandidates = new List<IdCandidate>
+        // Fallback list only: the primary composite-object check is the
+        // ModelItem.IsComposite API flag. These node-type names (compared against
+        // the LcOaNode/LcOaNodeIcon constant) are consulted for files where that
+        // flag is not set; both English and Russian spellings are accepted.
+        public List<string> ObjectNodeTypes = new List<string>
         {
-            new IdCandidate("Item", "GUID"),
-            new IdCandidate("Item", "Element ID"),
-            new IdCandidate("Item", "Id"),
-            new IdCandidate("Element", "GUID"),
-            new IdCandidate("Element", "Element ID"),
-            new IdCandidate("Element ID", "Value"),
-            new IdCandidate("Element", "Id"),
-            new IdCandidate("InstanceData", "Instance GUID"),
-            new IdCandidate("IFC", "GlobalId"),
+            "Composite Object",
+            "Insert Group",
+            "Составной объект",
+            "Группа вставки",
         };
 
         // Name of a saved Selection Set / Search Set (Sets window) whose items get
-        // hidden before export (the "hide non-checked items" step). Leave empty to skip.
+        // hidden before recomputing tests (the "hide non-checked items" step).
+        // Leave empty to skip.
         public string HiddenSelectionSetName = "";
 
-        public bool ShowAllBeforeExport = true;
-        public bool HideExcludedBeforeExport = true;
-        public bool UpdateTestsBeforeExport = true;
+        public bool ShowAllBeforeUpdate = true;
+        public bool HideExcludedBeforeUpdate = true;
 
         public static string GetDefaultPath(string pluginDirectory)
         {
@@ -74,7 +47,6 @@ namespace ClashIdFixer.Config
             if (!File.Exists(path))
             {
                 var def = new ClashIdFixerConfig();
-                def.OutputFolder = Path.GetDirectoryName(path) ?? "";
                 def.Save(path);
                 return def;
             }
@@ -108,20 +80,9 @@ namespace ClashIdFixer.Config
                 if (list.Count > 0) cfg.ObjectNodeTypes = list;
             }
 
-            var idCandidatesEl = root.Element("IdCandidates");
-            if (idCandidatesEl != null)
-            {
-                var list = idCandidatesEl.Elements("Candidate")
-                    .Select(e => new IdCandidate((string)e.Attribute("Category"), (string)e.Attribute("Property")))
-                    .Where(c => !string.IsNullOrEmpty(c.Category) && !string.IsNullOrEmpty(c.Property))
-                    .ToList();
-                if (list.Count > 0) cfg.IdCandidates = list;
-            }
-
             cfg.HiddenSelectionSetName = (string)root.Element("HiddenSelectionSetName") ?? "";
-            cfg.ShowAllBeforeExport = ParseBool(root.Element("ShowAllBeforeExport"), cfg.ShowAllBeforeExport);
-            cfg.HideExcludedBeforeExport = ParseBool(root.Element("HideExcludedBeforeExport"), cfg.HideExcludedBeforeExport);
-            cfg.UpdateTestsBeforeExport = ParseBool(root.Element("UpdateTestsBeforeExport"), cfg.UpdateTestsBeforeExport);
+            cfg.ShowAllBeforeUpdate = ParseBool(root.Element("ShowAllBeforeUpdate"), cfg.ShowAllBeforeUpdate);
+            cfg.HideExcludedBeforeUpdate = ParseBool(root.Element("HideExcludedBeforeUpdate"), cfg.HideExcludedBeforeUpdate);
 
             return cfg;
         }
@@ -138,12 +99,9 @@ namespace ClashIdFixer.Config
             var root = new XElement("ClashIdFixerConfig",
                 new XElement("OutputFolder", OutputFolder),
                 new XElement("ObjectNodeTypes", ObjectNodeTypes.Select(t => new XElement("NodeType", t))),
-                new XElement("IdCandidates", IdCandidates.Select(c =>
-                    new XElement("Candidate", new XAttribute("Category", c.Category), new XAttribute("Property", c.Property)))),
                 new XElement("HiddenSelectionSetName", HiddenSelectionSetName),
-                new XElement("ShowAllBeforeExport", ShowAllBeforeExport.ToString(CultureInfo.InvariantCulture)),
-                new XElement("HideExcludedBeforeExport", HideExcludedBeforeExport.ToString(CultureInfo.InvariantCulture)),
-                new XElement("UpdateTestsBeforeExport", UpdateTestsBeforeExport.ToString(CultureInfo.InvariantCulture))
+                new XElement("ShowAllBeforeUpdate", ShowAllBeforeUpdate.ToString(CultureInfo.InvariantCulture)),
+                new XElement("HideExcludedBeforeUpdate", HideExcludedBeforeUpdate.ToString(CultureInfo.InvariantCulture))
             );
 
             var directory = Path.GetDirectoryName(path);
