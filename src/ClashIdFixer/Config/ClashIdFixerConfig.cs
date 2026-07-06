@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
@@ -28,14 +27,6 @@ namespace ClashIdFixer.Config
             "Составной объект",
             "Группа вставки",
         };
-
-        // Name of a saved Selection Set / Search Set (Sets window) whose items get
-        // hidden before recomputing tests (the "hide non-checked items" step).
-        // Leave empty to skip.
-        public string HiddenSelectionSetName = "";
-
-        public bool ShowAllBeforeUpdate = true;
-        public bool HideExcludedBeforeUpdate = true;
 
         public static string GetDefaultPath(string pluginDirectory)
         {
@@ -80,28 +71,14 @@ namespace ClashIdFixer.Config
                 if (list.Count > 0) cfg.ObjectNodeTypes = list;
             }
 
-            cfg.HiddenSelectionSetName = (string)root.Element("HiddenSelectionSetName") ?? "";
-            cfg.ShowAllBeforeUpdate = ParseBool(root.Element("ShowAllBeforeUpdate"), cfg.ShowAllBeforeUpdate);
-            cfg.HideExcludedBeforeUpdate = ParseBool(root.Element("HideExcludedBeforeUpdate"), cfg.HideExcludedBeforeUpdate);
-
             return cfg;
-        }
-
-        private static bool ParseBool(XElement el, bool fallback)
-        {
-            if (el == null) return fallback;
-            bool result;
-            return bool.TryParse(el.Value, out result) ? result : fallback;
         }
 
         public void Save(string path)
         {
             var root = new XElement("ClashIdFixerConfig",
                 new XElement("OutputFolder", OutputFolder),
-                new XElement("ObjectNodeTypes", ObjectNodeTypes.Select(t => new XElement("NodeType", t))),
-                new XElement("HiddenSelectionSetName", HiddenSelectionSetName),
-                new XElement("ShowAllBeforeUpdate", ShowAllBeforeUpdate.ToString(CultureInfo.InvariantCulture)),
-                new XElement("HideExcludedBeforeUpdate", HideExcludedBeforeUpdate.ToString(CultureInfo.InvariantCulture))
+                new XElement("ObjectNodeTypes", ObjectNodeTypes.Select(t => new XElement("NodeType", t)))
             );
 
             var directory = Path.GetDirectoryName(path);

@@ -19,13 +19,4 @@
     <NodeType>Составной объект</NodeType>
     <NodeType>Группа вставки</NodeType>
   </ObjectNodeTypes>
-
-  <!--
-    Имя набора (окно "Наборы"/Sets), элементы которого нужно скрыть перед
-    пересчётом проверок ("непроверяемые"). Пусто = шаг пропускается.
-  -->
-  <HiddenSelectionSetName></HiddenSelectionSetName>
-
-  <ShowAllBeforeUpdate>true</ShowAllBeforeUpdate>
-  <HideExcludedBeforeUpdate>true</HideExcludedBeforeUpdate>
 </ClashIdFixerConfig>
