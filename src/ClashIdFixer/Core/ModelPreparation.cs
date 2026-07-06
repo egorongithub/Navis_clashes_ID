@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Autodesk.Navisworks.Api;
+using Autodesk.Navisworks.Api.Clash;
 
 namespace ClashIdFixer.Core
 {
