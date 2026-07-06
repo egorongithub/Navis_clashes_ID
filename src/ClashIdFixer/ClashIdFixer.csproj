@@ -13,6 +13,8 @@
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <LangVersion>7.3</LangVersion>
+    <!-- Navisworks 2022 is 64-bit only; match it to avoid MSIL/AMD64 mismatch warnings. -->
+    <PlatformTarget>x64</PlatformTarget>
 
     <!--
       Point this at your local Navisworks 2022 install (folder containing
@@ -50,12 +52,18 @@
     <Reference Include="System.Xml" />
 
     <!--
-      Managed API shipped with Navisworks Manage/Simulate/Freedom 2022. Only this
-      one assembly is needed - everything used here is plain .NET API, no COM
-      interop.
+      Managed API shipped with Navisworks Manage/Simulate 2022. The core API and
+      the Clash Detective API (namespace Autodesk.Navisworks.Api.Clash) live in
+      two separate assemblies, both in the Navisworks install folder. No COM
+      interop, no NuGet packages.
     -->
     <Reference Include="Autodesk.Navisworks.Api">
       <HintPath>$(NavisworksInstallDir)Autodesk.Navisworks.Api.dll</HintPath>
+      <Private>False</Private>
+      <SpecificVersion>False</SpecificVersion>
+    </Reference>
+    <Reference Include="Autodesk.Navisworks.Clash">
+      <HintPath>$(NavisworksInstallDir)Autodesk.Navisworks.Clash.dll</HintPath>
       <Private>False</Private>
       <SpecificVersion>False</SpecificVersion>
     </Reference>
