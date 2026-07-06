@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.props" Condition="Exists('$(MSBuildToolsPath)\Microsoft.Common.props')" />
+
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{5C6E9C1D-2B5E-4B0A-9B8B-7B1E9C1D2B5E}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>ClashIdFixer</RootNamespace>
+    <AssemblyName>ClashIdFixer</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <LangVersion>7.3</LangVersion>
+
+    <!--
+      Point this at your local Navisworks 2022 install (folder containing
+      Autodesk.Navisworks.Api.dll). Override without editing this file by
+      passing /p:NavisworksInstallDir=... to msbuild, or by setting the
+      NAVISWORKS_2022_DIR environment variable before opening the solution.
+    -->
+    <NavisworksInstallDir Condition=" '$(NavisworksInstallDir)' == '' and '$(NAVISWORKS_2022_DIR)' != '' ">$(NAVISWORKS_2022_DIR)</NavisworksInstallDir>
+    <NavisworksInstallDir Condition=" '$(NavisworksInstallDir)' == '' ">C:\Program Files\Autodesk\Navisworks Manage 2022\</NavisworksInstallDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+
+    <!--
+      Managed API shipped with Navisworks Manage/Simulate/Freedom 2022. Only this
+      one assembly is needed - everything used here is plain .NET API, no COM
+      interop.
+    -->
+    <Reference Include="Autodesk.Navisworks.Api">
+      <HintPath>$(NavisworksInstallDir)Autodesk.Navisworks.Api.dll</HintPath>
+      <Private>False</Private>
+      <SpecificVersion>False</SpecificVersion>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Config\ClashIdFixerConfig.cs" />
+    <Compile Include="Core\ObjectResolver.cs" />
+    <Compile Include="Core\ReflectionHelpers.cs" />
+    <Compile Include="Core\ModelPreparation.cs" />
+    <Compile Include="Core\ClashXmlExporter.cs" />
+    <Compile Include="Plugin\ExportClashesCommand.cs" />
+  </ItemGroup>
+
+  <!--
+    Navisworks discovers add-ins by scanning its Plugins folder for DLLs carrying
+    the [Plugin] attribute, so the built assembly just needs to be copied there -
+    see README.md for the exact path and packaging steps.
+  -->
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

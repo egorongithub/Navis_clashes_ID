@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Пример файла настроек. При первом запуске плагина файл
+  "ClashIdFixer.config.xml" с такими же значениями по умолчанию будет создан
+  автоматически рядом с ClashIdFixer.dll, если его там ещё нет. Скопируйте
+  этот файл рядом с ней и отредактируйте под свой проект, либо просто
+  отредактируйте автоматически созданный файл.
+-->
+<ClashIdFixerConfig>
+  <!-- Папка, куда сохраняется итоговый XML. Пусто = папка плагина. -->
+  <OutputFolder></OutputFolder>
+
+  <!--
+    Внутренние ("LcOaNode/LcOaNodeIcon") типы узлов Navisworks, которые
+    считаются "правильным объектом" (тем самым, у которого есть вкладка
+    "Объект"/Item в свойствах). Обычно это "Composite Object". Строка не
+    зависит от языка интерфейса Navisworks.
+  -->
+  <ObjectNodeTypes>
+    <NodeType>Composite Object</NodeType>
+    <NodeType>Insert Group</NodeType>
+  </ObjectNodeTypes>
+
+  <!--
+    Список пар "Категория свойств / Свойство", которые пробуются по очереди
+    на найденном объекте, чтобы вытащить его "настоящий" Id. Экспортируются
+    ВСЕ найденные совпадения - в самом XML будет видно, какое поле реально
+    нашлось в ваших файлах, чтобы выбрать правильное для сверки с выгрузкой
+    Signal.
+  -->
+  <IdCandidates>
+    <Candidate Category="Item" Property="GUID" />
+    <Candidate Category="Item" Property="Element ID" />
+    <Candidate Category="Item" Property="Id" />
+    <Candidate Category="Element" Property="GUID" />
+    <Candidate Category="Element" Property="Element ID" />
+    <Candidate Category="Element ID" Property="Value" />
+    <Candidate Category="Element" Property="Id" />
+    <Candidate Category="InstanceData" Property="Instance GUID" />
+    <Candidate Category="IFC" Property="GlobalId" />
+  </IdCandidates>
+
+  <!--
+    Имя набора (Sets/Наборы) в документе, элементы которого нужно скрывать
+    перед пересчётом проверок ("непроверяемые" элементы). Пусто = шаг
+    пропускается.
+  -->
+  <HiddenSelectionSetName></HiddenSelectionSetName>
+
+  <ShowAllBeforeExport>true</ShowAllBeforeExport>
+  <HideExcludedBeforeExport>true</HideExcludedBeforeExport>
+  <UpdateTestsBeforeExport>true</UpdateTestsBeforeExport>
+</ClashIdFixerConfig>
