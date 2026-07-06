@@ -36,7 +36,7 @@ namespace ClashIdFixer.Core
 
             var testElements = new List<XElement>();
 
-            foreach (ClashTest test in tests)
+            foreach (ClashTest test in tests.OfType<ClashTest>())
             {
                 summary.TestCount++;
                 var clashElements = new List<XElement>();

@@ -141,7 +141,7 @@ namespace ClashIdFixer.Core
             }
 
             int ok = 0, failed = 0;
-            foreach (var test in testsData.Tests)
+            foreach (var test in testsData.Tests.OfType<ClashTest>())
             {
                 if (ReflectionHelpers.TryRunTest(testsData, test))
                     ok++;
