@@ -24,18 +24,19 @@
     Где лежит истинный Id: вкладка свойств "Объект", графа "Id" (есть только
     у элемента "правильного выбора"). Проверяются все сочетания
     категория x свойство, и по отображаемым, и по внутренним именам.
+    LcRevitData_Element / LcRevitPropertyElementId - внутренние имена этой
+    вкладки/графы, не зависящие от языка интерфейса.
   -->
   <TrueIdCategories>
+    <Name>LcRevitData_Element</Name>
     <Name>Объект</Name>
     <Name>Item</Name>
-    <Name>Элемент</Name>
     <Name>Element</Name>
   </TrueIdCategories>
   <TrueIdProperties>
+    <Name>LcRevitPropertyElementId</Name>
     <Name>Id</Name>
     <Name>ID</Name>
     <Name>ИД</Name>
-    <Name>Ид</Name>
-    <Name>Идентификатор</Name>
   </TrueIdProperties>
 </ClashIdFixerConfig>

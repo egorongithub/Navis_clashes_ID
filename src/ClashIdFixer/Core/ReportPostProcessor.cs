@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Xml;
@@ -238,19 +239,42 @@ namespace ClashIdFixer.Core
         {
             for (int level = startLevel; level < pathNodes.Count; level++)
             {
-                var next = new List<ModelItem>();
-                foreach (var candidate in candidates)
-                {
-                    foreach (ModelItem child in candidate.Children)
-                    {
-                        if (NamesMatch(child.DisplayName, pathNodes[level]))
-                            next.Add(child);
-                    }
-                }
+                var next = MatchChildren(candidates, pathNodes[level]);
                 if (next.Count == 0) return null;
                 candidates = next;
             }
             return candidates.Count > 0 ? candidates[0] : null;
+        }
+
+        /// <summary>
+        /// Matches the next path node against the candidates' children. Unnamed
+        /// nodes (typically leaf geometry) are shown in the Navisworks tree - and
+        /// written to the report - with a type placeholder like "Твердое тело" /
+        /// "Solid", while their real DisplayName is empty; so when nothing matches
+        /// by name, unnamed children are accepted for that level.
+        /// </summary>
+        private static List<ModelItem> MatchChildren(List<ModelItem> candidates, string reportName)
+        {
+            var next = new List<ModelItem>();
+            foreach (var candidate in candidates)
+            {
+                foreach (ModelItem child in candidate.Children)
+                {
+                    if (NamesMatch(child.DisplayName, reportName))
+                        next.Add(child);
+                }
+            }
+            if (next.Count > 0) return next;
+
+            foreach (var candidate in candidates)
+            {
+                foreach (ModelItem child in candidate.Children)
+                {
+                    if (string.IsNullOrWhiteSpace(child.DisplayName))
+                        next.Add(child);
+                }
+            }
+            return next;
         }
 
         private static bool NamesMatch(string modelName, string reportName)
@@ -296,15 +320,47 @@ namespace ClashIdFixer.Core
                         var property = FindProperty(current, categoryName, propertyName);
                         if (property == null) continue;
 
-                        string value = null;
-                        try { value = property.Value.ToDisplayString(); }
-                        catch { }
-
+                        string value = VariantToString(property.Value);
                         if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
                     }
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// VariantData accessors are strictly typed: ToDisplayString() throws for
+        /// a numeric value (which is exactly how the Revit element Id is stored,
+        /// as Int32 - the reason ids came back "unreadable"). Try the accessors in
+        /// turn, then fall back to parsing VariantData.ToString() ("Type:Value").
+        /// </summary>
+        private static string VariantToString(VariantData value)
+        {
+            if (value == null) return null;
+
+            try { return value.ToDisplayString(); } catch { }
+            try { return value.ToInt32().ToString(CultureInfo.InvariantCulture); } catch { }
+            try { return value.ToIdentifierString(); } catch { }
+            try { return value.ToDouble().ToString(CultureInfo.InvariantCulture); } catch { }
+            try
+            {
+                var constant = value.ToNamedConstant();
+                if (constant != null) return constant.DisplayName;
+            }
+            catch { }
+            try { return value.ToBoolean().ToString(CultureInfo.InvariantCulture); } catch { }
+
+            try
+            {
+                string raw = value.ToString();
+                if (raw == null) return null;
+                int colon = raw.IndexOf(':');
+                return colon >= 0 ? raw.Substring(colon + 1) : raw;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static DataProperty FindProperty(ModelItem item, string categoryName, string propertyName)
@@ -384,18 +440,13 @@ namespace ClashIdFixer.Core
 
             for (int level = anchorOffset + 1; level < pathNodes.Count; level++)
             {
-                var next = new List<ModelItem>();
-                foreach (var candidate in candidates)
-                    foreach (ModelItem child in candidate.Children)
-                        if (NamesMatch(child.DisplayName, pathNodes[level]))
-                            next.Add(child);
-
+                var next = MatchChildren(candidates, pathNodes[level]);
                 if (next.Count == 0)
                 {
                     diag.AppendLine(string.Format("СТОП на узле[{0}] = \"{1}\": совпадений нет.", level, pathNodes[level]));
                     var childNames = candidates
                         .SelectMany(c => c.Children.Cast<ModelItem>())
-                        .Select(c => c.DisplayName ?? "(без имени)")
+                        .Select(c => string.IsNullOrEmpty(c.DisplayName) ? "(без имени)" : c.DisplayName)
                         .Distinct()
                         .Take(25)
                         .ToList();
@@ -434,9 +485,7 @@ namespace ClashIdFixer.Core
                             category.DisplayName ?? "", category.Name ?? ""));
                         foreach (DataProperty property in category.Properties)
                         {
-                            string value;
-                            try { value = property.Value.ToDisplayString(); }
-                            catch { value = "(не читается)"; }
+                            string value = VariantToString(property.Value) ?? "(не читается)";
                             diag.AppendLine(string.Format("        \"{0}\" [{1}] = {2}",
                                 property.DisplayName ?? "", property.Name ?? "", value));
                         }

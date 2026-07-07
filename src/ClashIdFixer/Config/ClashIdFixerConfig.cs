@@ -30,22 +30,23 @@ namespace ClashIdFixer.Config
         // Where the TRUE element id lives: the "Объект" properties tab, "Id" row
         // (exists only at the real-object level). Both display and internal names
         // are tried for every category/property combination, so extra entries are
-        // cheap and localization-proof.
+        // cheap and localization-proof. LcRevitData_Element/LcRevitPropertyElementId
+        // are the INTERNAL names of that exact tab/row (confirmed by a live
+        // diagnostics dump), so this works even if the UI language changes.
         public List<string> TrueIdCategories = new List<string>
         {
+            "LcRevitData_Element",
             "Объект",
             "Item",
-            "Элемент",
             "Element",
         };
 
         public List<string> TrueIdProperties = new List<string>
         {
+            "LcRevitPropertyElementId",
             "Id",
             "ID",
             "ИД",
-            "Ид",
-            "Идентификатор",
         };
 
         public static string GetDefaultPath(string pluginDirectory)
