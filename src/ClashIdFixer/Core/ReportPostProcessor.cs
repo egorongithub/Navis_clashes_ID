@@ -74,14 +74,34 @@ namespace ClashIdFixer.Core
                 .ToList();
             result.ClashObjectCount = clashObjects.Count;
 
-            // Report coordinates are in the units declared on <exchange>; the API
-            // works in Navisworks internal units (meters).
-            double unitScale = 1.0;
+            // Report coordinates are in the units declared on <exchange> (display
+            // units, e.g. meters), while the API returns geometry in the DOCUMENT's
+            // units (e.g. feet for a Revit-sourced model) - convert between them.
+            string reportUnits = "";
+            double reportUnitsToMeters = 1.0;
             if (xdoc.Root != null)
             {
                 var unitsAttr = xdoc.Root.Attribute("units");
-                if (unitsAttr != null) unitScale = UnitsToMeters(unitsAttr.Value);
+                if (unitsAttr != null)
+                {
+                    reportUnits = unitsAttr.Value;
+                    reportUnitsToMeters = UnitsToMeters(reportUnits);
+                }
             }
+            string documentUnits;
+            double documentMetersPerUnit = GetDocumentMetersPerUnit(document, out documentUnits);
+            double unitScale = reportUnitsToMeters / documentMetersPerUnit;
+
+            bool diagHeaderWritten = false;
+            Action writeDiagHeader = () =>
+            {
+                if (diagHeaderWritten || diagnostics == null) return;
+                diagHeaderWritten = true;
+                diagnostics.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "Единицы отчёта: \"{0}\" ({1} м); единицы документа: \"{2}\" ({3} м); множитель точки: {4}",
+                    reportUnits, reportUnitsToMeters, documentUnits, documentMetersPerUnit, unitScale));
+                diagnostics.AppendLine();
+            };
 
             // Path candidates are cached per unique path; decisions per (path, id, point).
             var candidatesCache = new Dictionary<string, List<ModelItem>>(StringComparer.Ordinal);
@@ -129,7 +149,7 @@ namespace ClashIdFixer.Core
                         candidatesCache[pathKey] = candidates;
                     }
 
-                    decision = Decide(candidates, reportedId, hasPoint, px, py, pz, config);
+                    decision = Decide(candidates, reportedId, hasPoint, px, py, pz, documentMetersPerUnit, config);
                     decisionCache[decisionKey] = decision;
 
                     if (diagnostics != null)
@@ -137,16 +157,19 @@ namespace ClashIdFixer.Core
                         if (decision.Kind == DecisionKind.PathNotFound && diagnosedPaths < MaxDiagnosedCases)
                         {
                             diagnosedPaths++;
+                            writeDiagHeader();
                             DiagnosePath(document, pathNodes, diagnostics);
                         }
                         else if (decision.Kind == DecisionKind.TrueIdMissing && diagnosedNoId < MaxDiagnosedCases)
                         {
                             diagnosedNoId++;
+                            writeDiagHeader();
                             DescribeAncestors(candidates[0], diagnostics);
                         }
                         else if (decision.Kind == DecisionKind.Ambiguous && diagnosedAmbiguous < MaxDiagnosedCases)
                         {
                             diagnosedAmbiguous++;
+                            writeDiagHeader();
                             DescribeAmbiguity(candidates, pathNodes, reportedId, hasPoint, px, py, pz, config, diagnostics);
                         }
                     }
@@ -212,7 +235,7 @@ namespace ClashIdFixer.Core
         /// segment (leaf up to its element node), never on shared ancestors.
         /// </summary>
         private static Decision Decide(List<ModelItem> candidates, string reportedId,
-            bool hasPoint, double px, double py, double pz, ClashIdFixerConfig config)
+            bool hasPoint, double px, double py, double pz, double metersPerUnit, ClashIdFixerConfig config)
         {
             if (candidates == null || candidates.Count == 0)
                 return new Decision { Kind = DecisionKind.PathNotFound };
@@ -267,7 +290,9 @@ namespace ClashIdFixer.Core
                     }
                 }
 
-                double limit = idConfirmed ? PointLimitConfirmed : PointLimitUnconfirmed;
+                // Limits are defined in meters; distances come out in document units.
+                double limit = (idConfirmed ? PointLimitConfirmed : PointLimitUnconfirmed)
+                    / (metersPerUnit > 0 ? metersPerUnit : 1.0);
                 if (best >= 0 && bestDistance <= limit)
                     return new Decision { Kind = DecisionKind.Replace, TrueId = ids[best] };
             }
@@ -377,8 +402,41 @@ namespace ClashIdFixer.Core
                 case "ft": case "foot": case "feet": return 0.3048;
                 case "in": case "inch": case "inches": return 0.0254;
                 case "yd": case "yard": case "yards": return 0.9144;
+                case "mi": case "mile": case "miles": return 1609.344;
+                case "micrometer": case "micrometers": return 1e-6;
+                case "mil": case "mils": return 2.54e-5;
+                case "microinch": case "microinches": return 2.54e-8;
                 default: return 1.0;
             }
+        }
+
+        /// <summary>
+        /// The API returns geometry in the document's units (Document.Units), not
+        /// in the report's display units - for Revit-sourced models that's feet,
+        /// which made every point-to-box distance come out ~5 million meters.
+        /// Read via reflection so an SDK where the property is named differently
+        /// degrades to scale 1 instead of failing the build.
+        /// </summary>
+        private static double GetDocumentMetersPerUnit(Document document, out string unitsName)
+        {
+            unitsName = "(неизвестно)";
+            try
+            {
+                var unitsProperty = typeof(Document).GetProperty("Units");
+                if (unitsProperty != null)
+                {
+                    var value = unitsProperty.GetValue(document, null);
+                    if (value != null)
+                    {
+                        unitsName = value.ToString();
+                        return UnitsToMeters(unitsName);
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return 1.0;
         }
 
         private static bool MatchesAnyName(PropertyCategory category, IList<string> names)
@@ -755,7 +813,7 @@ namespace ClashIdFixer.Core
             diag.AppendLine("Путь из отчёта: " + string.Join(" > ", pathNodes));
             diag.AppendLine("Id из отчёта: " + reportedId);
             diag.AppendLine(hasPoint
-                ? string.Format(CultureInfo.InvariantCulture, "Точка коллизии (м): {0:F3}; {1:F3}; {2:F3}", px, py, pz)
+                ? string.Format(CultureInfo.InvariantCulture, "Точка коллизии (в единицах документа): {0:F3}; {1:F3}; {2:F3}", px, py, pz)
                 : "Точка коллизии в отчёте отсутствует.");
             diag.AppendLine("Кандидатов по пути: " + candidates.Count);
 
@@ -769,7 +827,7 @@ namespace ClashIdFixer.Core
                     double d = DistanceToBoundingBox(candidate, px, py, pz);
                     distance = d == double.MaxValue
                         ? "(бокс недоступен)"
-                        : d.ToString("F3", CultureInfo.InvariantCulture) + " м";
+                        : d.ToString("F3", CultureInfo.InvariantCulture) + " ед. док.";
                 }
                 diag.AppendLine(string.Format("  Кандидат \"{0}\": Объект/Id = {1}; id в сегменте: {2}; расстояние до точки: {3}",
                     candidate.DisplayName ?? "(без имени)", trueId, segment ? "да" : "нет", distance));
