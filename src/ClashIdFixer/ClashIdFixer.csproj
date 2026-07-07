@@ -70,7 +70,20 @@
     <Compile Include="Core\KnownFolders.cs" />
     <Compile Include="Core\ReportPostProcessor.cs" />
     <Compile Include="UI\ProgressForm.cs" />
+    <Compile Include="Plugin\FixReportRunner.cs" />
     <Compile Include="Plugin\FixReportCommand.cs" />
+    <Compile Include="Plugin\BimUpRibbonPlugin.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Ribbon layout and button icons for the "BIM УП" tab must be embedded
+      resources of the plugin assembly - Navisworks resolves the names from
+      RibbonLayout/Command attributes against embedded resources.
+    -->
+    <EmbeddedResource Include="Resources\BimUpRibbon.xaml" />
+    <EmbeddedResource Include="Resources\FixId16.png" />
+    <EmbeddedResource Include="Resources\FixId32.png" />
   </ItemGroup>
 
   <!--

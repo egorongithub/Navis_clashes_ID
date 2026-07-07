@@ -1,0 +1,12 @@
+<RibbonControl xmlns="clr-namespace:Autodesk.Windows;assembly=AdWindows"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <RibbonControl.Tabs>
+    <RibbonTab Id="ID_BIMUP_TAB" KeyTip="BU">
+      <RibbonPanel>
+        <RibbonPanelSource Title="Коллизии">
+          <RibbonButton Id="ID_BIMUP_FIXREPORT" Size="Large" ShowImage="True" ShowText="True" />
+        </RibbonPanelSource>
+      </RibbonPanel>
+    </RibbonTab>
+  </RibbonControl.Tabs>
+</RibbonControl>

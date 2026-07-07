@@ -22,6 +22,12 @@ namespace ClashIdFixer.Core
         public int NoIdAttribute;
         public int ValuesReplaced;
         public string OutputFile;
+
+        /// <summary>One line per skipped report entry (id left untouched).</summary>
+        public List<string> Errors = new List<string>();
+
+        /// <summary>How the report/model unit scale was determined.</summary>
+        public string UnitsSummary;
     }
 
     /// <summary>
@@ -75,8 +81,11 @@ namespace ClashIdFixer.Core
             result.ClashObjectCount = clashObjects.Count;
 
             // Report coordinates are in the units declared on <exchange> (display
-            // units, e.g. meters), while the API returns geometry in the DOCUMENT's
-            // units (e.g. feet for a Revit-sourced model) - convert between them.
+            // units, e.g. meters), while the API returns geometry in the units the
+            // model was authored in (feet for Revit-sourced files - but NOT
+            // guaranteed). The scale is therefore CALIBRATED: for the first clash
+            // points, plausible unit hypotheses are tried and the one that puts
+            // the points onto the candidate elements wins.
             string reportUnits = "";
             double reportUnitsToMeters = 1.0;
             if (xdoc.Root != null)
@@ -88,24 +97,25 @@ namespace ClashIdFixer.Core
                     reportUnitsToMeters = UnitsToMeters(reportUnits);
                 }
             }
-            string documentUnits;
-            double documentMetersPerUnit = GetDocumentMetersPerUnit(document, out documentUnits);
-            double unitScale = reportUnitsToMeters / documentMetersPerUnit;
+
+            // Path candidates are cached per unique path; decisions per (path, id, point).
+            var candidatesCache = new Dictionary<string, List<ModelItem>>(StringComparer.Ordinal);
+            var decisionCache = new Dictionary<string, Decision>(StringComparer.Ordinal);
+
+            string unitsSummary;
+            double metersPerUnit = CalibrateMetersPerUnit(document, clashObjects, candidatesCache,
+                reportUnitsToMeters, out unitsSummary);
+            result.UnitsSummary = string.Format(CultureInfo.InvariantCulture,
+                "Единицы отчёта: \"{0}\" ({1} м). {2}", reportUnits, reportUnitsToMeters, unitsSummary);
 
             bool diagHeaderWritten = false;
             Action writeDiagHeader = () =>
             {
                 if (diagHeaderWritten || diagnostics == null) return;
                 diagHeaderWritten = true;
-                diagnostics.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "Единицы отчёта: \"{0}\" ({1} м); единицы документа: \"{2}\" ({3} м); множитель точки: {4}",
-                    reportUnits, reportUnitsToMeters, documentUnits, documentMetersPerUnit, unitScale));
+                diagnostics.AppendLine(result.UnitsSummary);
                 diagnostics.AppendLine();
             };
-
-            // Path candidates are cached per unique path; decisions per (path, id, point).
-            var candidatesCache = new Dictionary<string, List<ModelItem>>(StringComparer.Ordinal);
-            var decisionCache = new Dictionary<string, Decision>(StringComparer.Ordinal);
 
             int index = 0;
             foreach (var clashObject in clashObjects)
@@ -119,6 +129,7 @@ namespace ClashIdFixer.Core
                 if (reportedId == null)
                 {
                     result.NoIdAttribute++;
+                    AddError(result, clashObject, null, "в записи отчёта нет атрибута с ID (см. ReportIdAttributeNames в настройках)");
                     continue;
                 }
 
@@ -126,11 +137,12 @@ namespace ClashIdFixer.Core
                 if (pathNodes.Count == 0)
                 {
                     result.PathUnresolved++;
+                    AddError(result, clashObject, reportedId, "в записи отчёта нет пути (pathlink)");
                     continue;
                 }
 
                 double px, py, pz;
-                bool hasPoint = TryGetClashPoint(clashObject, unitScale, out px, out py, out pz);
+                bool hasPoint = TryGetClashPoint(clashObject, reportUnitsToMeters / metersPerUnit, out px, out py, out pz);
 
                 string pathKey = string.Join("\n", pathNodes);
                 string decisionKey = pathKey + "\n#id=" + reportedId + (hasPoint
@@ -149,7 +161,7 @@ namespace ClashIdFixer.Core
                         candidatesCache[pathKey] = candidates;
                     }
 
-                    decision = Decide(candidates, reportedId, hasPoint, px, py, pz, documentMetersPerUnit, config);
+                    decision = Decide(candidates, reportedId, hasPoint, px, py, pz, metersPerUnit, config);
                     decisionCache[decisionKey] = decision;
 
                     if (diagnostics != null)
@@ -179,6 +191,7 @@ namespace ClashIdFixer.Core
                 {
                     case DecisionKind.PathNotFound:
                         result.PathUnresolved++;
+                        AddError(result, clashObject, reportedId, "элемент не найден в открытой модели по пути из отчёта");
                         break;
 
                     case DecisionKind.AlreadyCorrect:
@@ -189,11 +202,13 @@ namespace ClashIdFixer.Core
                     case DecisionKind.TrueIdMissing:
                         result.PathResolved++;
                         result.TrueIdNotFound++;
+                        AddError(result, clashObject, reportedId, "выше по дереву не найдено свойство \"Объект/Id\"");
                         break;
 
                     case DecisionKind.Ambiguous:
                         result.PathResolved++;
                         result.Ambiguous++;
+                        AddError(result, clashObject, reportedId, "несколько одинаковых элементов, экземпляр не опознан (по id и точке коллизии)");
                         break;
 
                     case DecisionKind.Replace:
@@ -216,6 +231,139 @@ namespace ClashIdFixer.Core
             xdoc.Save(outputXmlPath);
             result.OutputFile = outputXmlPath;
             return result;
+        }
+
+        /// <summary>
+        /// One error line per skipped entry: clash name, element side, id, reason,
+        /// path - enough to find the entry in the report and in the model.
+        /// </summary>
+        private static void AddError(FixReportResult result, XElement clashObject, string reportedId, string reason)
+        {
+            string clashName = "(без имени)";
+            int side = 0;
+            var clashResult = clashObject.Ancestors()
+                .FirstOrDefault(a => string.Equals(a.Name.LocalName, "clashresult", StringComparison.OrdinalIgnoreCase));
+            if (clashResult != null)
+            {
+                var nameAttr = clashResult.Attribute("name");
+                if (nameAttr != null && nameAttr.Value.Length > 0) clashName = nameAttr.Value;
+
+                var siblings = clashResult.Descendants()
+                    .Where(e => string.Equals(e.Name.LocalName, "clashobject", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                side = siblings.IndexOf(clashObject) + 1;
+            }
+
+            var pathNodes = ExtractPathNodes(clashObject);
+            result.Errors.Add(string.Format("{0} | элемент {1} | ID: {2} | {3} | путь: {4}",
+                clashName,
+                side > 0 ? side.ToString(CultureInfo.InvariantCulture) : "?",
+                reportedId ?? "-",
+                reason,
+                string.Join(" > ", pathNodes)));
+        }
+
+        private sealed class ScaleHypothesis
+        {
+            public string Name;
+            public double MetersPerUnit;
+            public int Votes;
+        }
+
+        /// <summary>
+        /// Determines what one API length unit is in meters by trying plausible
+        /// hypotheses (document units from the API, feet, meters, mm, cm, inches)
+        /// against the first clash points: the correct scale is the one under
+        /// which points land on (distance ~0 to) their candidate elements. Revit
+        /// models normally come out as feet, but this must not be assumed - other
+        /// sources use other units, so it is measured per document instead.
+        /// </summary>
+        private static double CalibrateMetersPerUnit(Document document, List<XElement> clashObjects,
+            Dictionary<string, List<ModelItem>> candidatesCache, double reportUnitsToMeters, out string summary)
+        {
+            string documentUnits;
+            double apiMetersPerUnit = GetDocumentMetersPerUnit(document, out documentUnits);
+
+            var hypotheses = new List<ScaleHypothesis>
+            {
+                new ScaleHypothesis { Name = "единицы документа (" + documentUnits + ")", MetersPerUnit = apiMetersPerUnit },
+                new ScaleHypothesis { Name = "футы", MetersPerUnit = 0.3048 },
+                new ScaleHypothesis { Name = "метры", MetersPerUnit = 1.0 },
+                new ScaleHypothesis { Name = "миллиметры", MetersPerUnit = 0.001 },
+                new ScaleHypothesis { Name = "сантиметры", MetersPerUnit = 0.01 },
+                new ScaleHypothesis { Name = "дюймы", MetersPerUnit = 0.0254 },
+            };
+            // Drop duplicates of the API value so votes are not split between them.
+            for (int i = hypotheses.Count - 1; i >= 1; i--)
+            {
+                if (Math.Abs(hypotheses[i].MetersPerUnit - apiMetersPerUnit) < 1e-9)
+                    hypotheses.RemoveAt(i);
+            }
+
+            int observations = 0, scanned = 0;
+            foreach (var clashObject in clashObjects)
+            {
+                if (observations >= 8 || scanned >= 300) break;
+                scanned++;
+
+                double mx, my, mz; // point in meters
+                if (!TryGetClashPoint(clashObject, reportUnitsToMeters, out mx, out my, out mz)) continue;
+
+                var pathNodes = ExtractPathNodes(clashObject);
+                if (pathNodes.Count == 0) continue;
+
+                string pathKey = string.Join("\n", pathNodes);
+                List<ModelItem> candidates;
+                if (!candidatesCache.TryGetValue(pathKey, out candidates))
+                {
+                    candidates = ResolveByPath(document, pathNodes);
+                    candidatesCache[pathKey] = candidates;
+                }
+                if (candidates.Count == 0) continue;
+
+                ScaleHypothesis best = null;
+                double bestMeters = double.MaxValue;
+                foreach (var hypothesis in hypotheses)
+                {
+                    if (hypothesis.MetersPerUnit <= 0) continue;
+                    double min = double.MaxValue;
+                    foreach (var candidate in candidates)
+                    {
+                        double d = DistanceToBoundingBox(candidate,
+                            mx / hypothesis.MetersPerUnit,
+                            my / hypothesis.MetersPerUnit,
+                            mz / hypothesis.MetersPerUnit);
+                        if (d < min) min = d;
+                    }
+                    if (min == double.MaxValue) continue;
+                    double meters = min * hypothesis.MetersPerUnit;
+                    if (meters < bestMeters)
+                    {
+                        bestMeters = meters;
+                        best = hypothesis;
+                    }
+                }
+
+                if (best != null && bestMeters <= 1.0)
+                {
+                    best.Votes++;
+                    observations++;
+                }
+            }
+
+            var winner = hypotheses.OrderByDescending(h => h.Votes).First();
+            if (winner.Votes == 0)
+            {
+                summary = string.Format(CultureInfo.InvariantCulture,
+                    "Единицы модели: калибровка по точкам не удалась, используются единицы документа из API: {0} ({1} м).",
+                    documentUnits, apiMetersPerUnit);
+                return apiMetersPerUnit > 0 ? apiMetersPerUnit : 1.0;
+            }
+
+            summary = string.Format(CultureInfo.InvariantCulture,
+                "Единицы модели (по калибровке точек коллизий): {0} ({1} м), голосов {2} из {3}.",
+                winner.Name, winner.MetersPerUnit, winner.Votes, observations);
+            return winner.MetersPerUnit;
         }
 
         // A clash point must essentially touch the element it identifies; these
