@@ -18,39 +18,49 @@ namespace ClashIdFixer.Core
         public int AlreadyCorrect;
         public int IdReplaced;
         public int TrueIdNotFound;
+        public int Ambiguous;
         public int NoIdAttribute;
         public int ValuesReplaced;
         public string OutputFile;
     }
 
     /// <summary>
-    /// Patches a standard Clash Detective XML report. For every clash object the
-    /// report carries an id attribute (e.g. "ID объекта" / value) taken from the
-    /// geometry sub-object. The true element id lives in the "Объект" properties
-    /// tab, "Id" row, which only exists at the real-object level. So: resolve the
-    /// report path to a ModelItem, walk up the tree to the first node that HAS
-    /// the "Объект/Id" property, and if its value differs from what the report
-    /// says - write the true value into the report. Ids that already match are
-    /// left untouched. Nothing else in the report is modified.
+    /// Patches a standard Clash Detective XML report.
+    ///
+    /// Key insight: the tree path in the report is NOT unique (a model has many
+    /// identically named walls), so the reported id itself is used to identify
+    /// the element among all path matches:
+    ///  - if some candidate's true id ("Объект"/"Id") equals the reported id, the
+    ///    report is already correct - nothing is touched;
+    ///  - otherwise the candidate whose geometry-id chain ("ID объекта") contains
+    ///    the reported id is the right instance, and ITS true id is written;
+    ///  - when the element cannot be identified unambiguously, the value is left
+    ///    alone rather than guessed at.
     /// </summary>
     public static class ReportPostProcessor
     {
-        private sealed class ItemMapping
+        private const int MaxDiagnosedCases = 8;
+
+        private enum DecisionKind
         {
-            public ModelItem SourceItem;
-            public string TrueId;
+            PathNotFound,
+            AlreadyCorrect,
+            Replace,
+            TrueIdMissing,
+            Ambiguous
         }
 
-        // How many unique problem cases get a full dump in the diagnostics file -
-        // enough to identify the real category/property/tree names without
-        // producing a megabyte log on a large report.
-        private const int MaxDiagnosedCases = 8;
+        private sealed class Decision
+        {
+            public DecisionKind Kind;
+            public string TrueId;
+        }
 
         public static FixReportResult Fix(Document document, string inputXmlPath, string outputXmlPath,
             ClashIdFixerConfig config, Action<int, int> progress, StringBuilder diagnostics)
         {
             var result = new FixReportResult();
-            int diagnosedPaths = 0, diagnosedNoId = 0;
+            int diagnosedPaths = 0, diagnosedNoId = 0, diagnosedAmbiguous = 0;
 
             XDocument xdoc;
             var readerSettings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, XmlResolver = null };
@@ -64,8 +74,9 @@ namespace ClashIdFixer.Core
                 .ToList();
             result.ClashObjectCount = clashObjects.Count;
 
-            // The same sub-object appears in many clashes; resolve each unique path once.
-            var mappingCache = new Dictionary<string, ItemMapping>(StringComparer.Ordinal);
+            // Path candidates are cached per unique path; decisions per (path, id).
+            var candidatesCache = new Dictionary<string, List<ModelItem>>(StringComparer.Ordinal);
+            var decisionCache = new Dictionary<string, Decision>(StringComparer.Ordinal);
 
             int index = 0;
             foreach (var clashObject in clashObjects)
@@ -74,7 +85,9 @@ namespace ClashIdFixer.Core
                 if (progress != null) progress(index, clashObjects.Count);
 
                 var idValueElements = FindReportIdValues(clashObject, config.ReportIdAttributeNames);
-                if (idValueElements.Count == 0)
+                string reportedId = idValueElements.Select(e => e.Value.Trim())
+                    .FirstOrDefault(v => v.Length > 0);
+                if (reportedId == null)
                 {
                     result.NoIdAttribute++;
                     continue;
@@ -87,57 +100,78 @@ namespace ClashIdFixer.Core
                     continue;
                 }
 
-                string cacheKey = string.Join("\u0001", pathNodes);
-                ItemMapping mapping;
-                if (!mappingCache.TryGetValue(cacheKey, out mapping))
+                string pathKey = string.Join("\n", pathNodes);
+                string decisionKey = pathKey + "\n#id=" + reportedId;
+
+                Decision decision;
+                if (!decisionCache.TryGetValue(decisionKey, out decision))
                 {
-                    mapping = new ItemMapping();
-                    mapping.SourceItem = ResolveByPath(document, pathNodes);
-                    if (mapping.SourceItem != null)
-                        mapping.TrueId = FindTrueId(mapping.SourceItem, config);
-                    mappingCache[cacheKey] = mapping;
+                    List<ModelItem> candidates;
+                    if (!candidatesCache.TryGetValue(pathKey, out candidates))
+                    {
+                        candidates = ResolveByPath(document, pathNodes);
+                        candidatesCache[pathKey] = candidates;
+                    }
+
+                    decision = Decide(candidates, reportedId, config);
+                    decisionCache[decisionKey] = decision;
 
                     if (diagnostics != null)
                     {
-                        if (mapping.SourceItem == null && diagnosedPaths < MaxDiagnosedCases)
+                        if (decision.Kind == DecisionKind.PathNotFound && diagnosedPaths < MaxDiagnosedCases)
                         {
                             diagnosedPaths++;
                             DiagnosePath(document, pathNodes, diagnostics);
                         }
-                        else if (mapping.SourceItem != null && string.IsNullOrEmpty(mapping.TrueId)
-                                 && diagnosedNoId < MaxDiagnosedCases)
+                        else if (decision.Kind == DecisionKind.TrueIdMissing && diagnosedNoId < MaxDiagnosedCases)
                         {
                             diagnosedNoId++;
-                            DescribeAncestors(mapping.SourceItem, diagnostics);
+                            DescribeAncestors(candidates[0], diagnostics);
+                        }
+                        else if (decision.Kind == DecisionKind.Ambiguous && diagnosedAmbiguous < MaxDiagnosedCases)
+                        {
+                            diagnosedAmbiguous++;
+                            DescribeAmbiguity(candidates, pathNodes, reportedId, config, diagnostics);
                         }
                     }
                 }
 
-                if (mapping.SourceItem == null)
+                switch (decision.Kind)
                 {
-                    result.PathUnresolved++;
-                    continue;
-                }
-                result.PathResolved++;
+                    case DecisionKind.PathNotFound:
+                        result.PathUnresolved++;
+                        break;
 
-                if (string.IsNullOrEmpty(mapping.TrueId))
-                {
-                    result.TrueIdNotFound++;
-                    continue;
-                }
+                    case DecisionKind.AlreadyCorrect:
+                        result.PathResolved++;
+                        result.AlreadyCorrect++;
+                        break;
 
-                bool replacedAny = false;
-                foreach (var valueElement in idValueElements)
-                {
-                    if (!string.Equals(valueElement.Value.Trim(), mapping.TrueId.Trim(), StringComparison.Ordinal))
-                    {
-                        valueElement.Value = mapping.TrueId;
-                        result.ValuesReplaced++;
-                        replacedAny = true;
-                    }
-                }
+                    case DecisionKind.TrueIdMissing:
+                        result.PathResolved++;
+                        result.TrueIdNotFound++;
+                        break;
 
-                if (replacedAny) result.IdReplaced++; else result.AlreadyCorrect++;
+                    case DecisionKind.Ambiguous:
+                        result.PathResolved++;
+                        result.Ambiguous++;
+                        break;
+
+                    case DecisionKind.Replace:
+                        result.PathResolved++;
+                        int replaced = 0;
+                        foreach (var valueElement in idValueElements)
+                        {
+                            if (!string.Equals(valueElement.Value.Trim(), decision.TrueId, StringComparison.Ordinal))
+                            {
+                                valueElement.Value = decision.TrueId;
+                                replaced++;
+                            }
+                        }
+                        result.ValuesReplaced += replaced;
+                        if (replaced > 0) result.IdReplaced++; else result.AlreadyCorrect++;
+                        break;
+                }
             }
 
             xdoc.Save(outputXmlPath);
@@ -146,10 +180,90 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// Collects the &lt;value&gt; elements of every objectattribute/smarttag of
-        /// the clash object whose &lt;name&gt; is one of the configured id names
-        /// ("ID объекта" in the standard Russian report).
+        /// Chooses what to do with one report entry given all model items whose
+        /// tree path matches the report path.
         /// </summary>
+        private static Decision Decide(List<ModelItem> candidates, string reportedId, ClashIdFixerConfig config)
+        {
+            if (candidates == null || candidates.Count == 0)
+                return new Decision { Kind = DecisionKind.PathNotFound };
+
+            var trueIds = new List<string>(candidates.Count);
+            foreach (var candidate in candidates)
+            {
+                string trueId = FindTrueId(candidate, config);
+                trueIds.Add(trueId);
+
+                // The reported id IS some candidate's true id - report is correct.
+                if (trueId != null && string.Equals(trueId, reportedId, StringComparison.Ordinal))
+                    return new Decision { Kind = DecisionKind.AlreadyCorrect };
+            }
+
+            // The reported id is a geometry-level id: find the instance that
+            // carries it and take that instance's true id.
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (trueIds[i] == null) continue;
+                if (ChainHasModelId(candidates[i], reportedId, config))
+                    return new Decision { Kind = DecisionKind.Replace, TrueId = trueIds[i] };
+            }
+
+            // No candidate carries the reported id at all. Only safe when the path
+            // pins down a single element anyway.
+            var distinct = trueIds.Where(t => t != null).Distinct().ToList();
+            if (distinct.Count == 1)
+                return new Decision { Kind = DecisionKind.Replace, TrueId = distinct[0] };
+            if (distinct.Count == 0)
+                return new Decision { Kind = DecisionKind.TrueIdMissing };
+
+            return new Decision { Kind = DecisionKind.Ambiguous };
+        }
+
+        /// <summary>
+        /// True when the reported id appears among the values of the geometry-id
+        /// categories ("ID объекта" / LcRevitId) on the item or any of its parents.
+        /// </summary>
+        private static bool ChainHasModelId(ModelItem item, string reportedId, ClashIdFixerConfig config)
+        {
+            for (var current = item; current != null; current = current.Parent)
+            {
+                try
+                {
+                    foreach (PropertyCategory category in current.PropertyCategories)
+                    {
+                        if (!MatchesAnyName(category, config.ModelIdCategories)) continue;
+
+                        foreach (DataProperty property in category.Properties)
+                        {
+                            string value = VariantToString(property.Value);
+                            if (value != null && string.Equals(value.Trim(), reportedId, StringComparison.Ordinal))
+                                return true;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
+        }
+
+        private static bool MatchesAnyName(PropertyCategory category, IList<string> names)
+        {
+            string display = null, internalName = null;
+            try { display = category.DisplayName; } catch { }
+            try { internalName = category.Name; } catch { }
+
+            foreach (var name in names)
+            {
+                if (display != null && string.Equals(display.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (internalName != null && string.Equals(internalName.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
         private static List<XElement> FindReportIdValues(XElement clashObject, IList<string> idAttributeNames)
         {
             var found = new List<XElement>();
@@ -184,30 +298,26 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// Resolves a report path to a ModelItem. The report prefixes the path
-        /// with a generic "Файл"/"File" node and includes the container NWD level
-        /// (e.g. Файл &gt; model.nwd &gt; part.nwc &gt; layer &gt; ...), while the
-        /// open document's roots may sit at any of those levels - so the anchor
-        /// point is searched: the first path node that matches a root wins, and
-        /// the rest of the path is walked down by display names from there. As a
-        /// last resort the walk is tried from the roots' children, for reports
-        /// whose leading nodes don't name any root at all.
+        /// Resolves a report path to ALL matching ModelItems. The report prefixes
+        /// the path with a generic "Файл"/"File" node and includes the container
+        /// NWD level, so the anchor point is searched at any offset; the rest of
+        /// the path is walked down by display names.
         /// </summary>
-        private static ModelItem ResolveByPath(Document document, List<string> pathNodes)
+        private static List<ModelItem> ResolveByPath(Document document, List<string> pathNodes)
         {
             var roots = document.Models.OfType<Model>()
                 .Where(m => m.RootItem != null)
                 .Select(m => m.RootItem)
                 .ToList();
-            if (roots.Count == 0) return null;
+            if (roots.Count == 0) return new List<ModelItem>();
 
             for (int offset = 0; offset < pathNodes.Count; offset++)
             {
                 var anchored = roots.Where(r => NamesMatch(r.DisplayName, pathNodes[offset])).Cast<ModelItem>().ToList();
                 if (anchored.Count == 0) continue;
 
-                var item = WalkDown(anchored, pathNodes, offset + 1);
-                if (item != null) return item;
+                var items = WalkDown(anchored, pathNodes, offset + 1);
+                if (items.Count > 0) return items;
             }
 
             for (int offset = 0; offset < pathNodes.Count; offset++)
@@ -223,27 +333,22 @@ namespace ClashIdFixer.Core
                 }
                 if (anchored.Count == 0) continue;
 
-                var item = WalkDown(anchored, pathNodes, offset + 1);
-                if (item != null) return item;
+                var items = WalkDown(anchored, pathNodes, offset + 1);
+                if (items.Count > 0) return items;
             }
 
-            return null;
+            return new List<ModelItem>();
         }
 
-        /// <summary>
-        /// Walks the remaining path levels strictly; keeps all candidates at each
-        /// level (duplicate names are common) and only succeeds if the whole path
-        /// is consumed.
-        /// </summary>
-        private static ModelItem WalkDown(List<ModelItem> candidates, List<string> pathNodes, int startLevel)
+        private static List<ModelItem> WalkDown(List<ModelItem> candidates, List<string> pathNodes, int startLevel)
         {
             for (int level = startLevel; level < pathNodes.Count; level++)
             {
                 var next = MatchChildren(candidates, pathNodes[level]);
-                if (next.Count == 0) return null;
+                if (next.Count == 0) return new List<ModelItem>();
                 candidates = next;
             }
-            return candidates.Count > 0 ? candidates[0] : null;
+            return candidates;
         }
 
         /// <summary>
@@ -303,11 +408,10 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// The true element id: the "Id" row of the "Объект" properties tab, which
-        /// exists only at the real-object level. Climbs from the resolved item up
-        /// through its parents and returns the first such value found. Category and
-        /// property names are configurable (both display and internal names are
-        /// tried) to survive localization differences.
+        /// The true element id: the "Id" row of the "Объект" properties tab
+        /// (internally LcRevitData_Element / LcRevitPropertyElementId), which only
+        /// exists at the real-object level. Climbs from the item up through its
+        /// parents and returns the first such value found.
         /// </summary>
         private static string FindTrueId(ModelItem item, ClashIdFixerConfig config)
         {
@@ -331,8 +435,8 @@ namespace ClashIdFixer.Core
         /// <summary>
         /// VariantData accessors are strictly typed: ToDisplayString() throws for
         /// a numeric value (which is exactly how the Revit element Id is stored,
-        /// as Int32 - the reason ids came back "unreadable"). Try the accessors in
-        /// turn, then fall back to parsing VariantData.ToString() ("Type:Value").
+        /// as Int32). Try the accessors in turn, then fall back to parsing
+        /// VariantData.ToString() ("Type:Value").
         /// </summary>
         private static string VariantToString(VariantData value)
         {
@@ -462,11 +566,9 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// Written to the _diag.txt file when the item was found but no
-        /// "Объект/Id" property exists up the chain: dumps every category and
-        /// property (display name, internal name, value) of the item and its
-        /// parents, so the correct names can be copied straight into
-        /// ClashIdFixer.config.xml.
+        /// Written to the _diag.txt file when the item was found but no true-id
+        /// property exists up the chain: dumps every category and property of the
+        /// item and its parents so the correct names can be copied into the config.
         /// </summary>
         private static void DescribeAncestors(ModelItem item, StringBuilder diag)
         {
@@ -497,6 +599,62 @@ namespace ClashIdFixer.Core
                 }
             }
             diag.AppendLine();
+        }
+
+        /// <summary>
+        /// Written to the _diag.txt file when several different elements match the
+        /// path but none of them carries the reported id: lists each candidate's
+        /// true id and the geometry ids found on its chain.
+        /// </summary>
+        private static void DescribeAmbiguity(List<ModelItem> candidates, List<string> pathNodes,
+            string reportedId, ClashIdFixerConfig config, StringBuilder diag)
+        {
+            diag.AppendLine("=== ПУТЬ НЕОДНОЗНАЧЕН, ID ИЗ ОТЧЁТА НЕ НАЙДЕН НИ У ОДНОГО КАНДИДАТА ===");
+            diag.AppendLine("Путь из отчёта: " + string.Join(" > ", pathNodes));
+            diag.AppendLine("Id из отчёта: " + reportedId);
+            diag.AppendLine("Кандидатов по пути: " + candidates.Count);
+
+            foreach (var candidate in candidates.Take(6))
+            {
+                string trueId = FindTrueId(candidate, config) ?? "(нет)";
+                var chainIds = CollectModelIds(candidate, config).Take(10).ToList();
+                diag.AppendLine(string.Format("  Кандидат \"{0}\": Объект/Id = {1}; ID объекта по цепочке: {2}",
+                    candidate.DisplayName ?? "(без имени)", trueId,
+                    chainIds.Count > 0 ? string.Join(", ", chainIds) : "(нет)"));
+            }
+            diag.AppendLine();
+        }
+
+        private static IEnumerable<string> CollectModelIds(ModelItem item, ClashIdFixerConfig config)
+        {
+            for (var current = item; current != null; current = current.Parent)
+            {
+                List<string> values = null;
+                try
+                {
+                    foreach (PropertyCategory category in current.PropertyCategories)
+                    {
+                        if (!MatchesAnyName(category, config.ModelIdCategories)) continue;
+                        foreach (DataProperty property in category.Properties)
+                        {
+                            string value = VariantToString(property.Value);
+                            if (!string.IsNullOrWhiteSpace(value))
+                            {
+                                if (values == null) values = new List<string>();
+                                values.Add(value.Trim());
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                if (values != null)
+                {
+                    foreach (var value in values) yield return value;
+                }
+            }
         }
     }
 }

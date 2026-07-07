@@ -49,6 +49,18 @@ namespace ClashIdFixer.Config
             "ИД",
         };
 
+        // Categories on MODEL items whose values correspond to the id written by
+        // the standard report ("ID объекта" tab, internally LcRevitId). Used to
+        // pick the right instance when several elements share the same tree path:
+        // the one whose chain carries the reported id is the one the clash hit.
+        public List<string> ModelIdCategories = new List<string>
+        {
+            "LcRevitId",
+            "ID объекта",
+            "ИД объекта",
+            "Object ID",
+        };
+
         public static string GetDefaultPath(string pluginDirectory)
         {
             return Path.Combine(pluginDirectory, "ClashIdFixer.config.xml");
@@ -86,6 +98,7 @@ namespace ClashIdFixer.Config
             ReadList(root, "ReportIdAttributeNames", "Name", cfg.ReportIdAttributeNames);
             ReadList(root, "TrueIdCategories", "Name", cfg.TrueIdCategories);
             ReadList(root, "TrueIdProperties", "Name", cfg.TrueIdProperties);
+            ReadList(root, "ModelIdCategories", "Name", cfg.ModelIdCategories);
 
             return cfg;
         }
@@ -110,7 +123,8 @@ namespace ClashIdFixer.Config
                 new XElement("OutputFolder", OutputFolder),
                 new XElement("ReportIdAttributeNames", ReportIdAttributeNames.Select(n => new XElement("Name", n))),
                 new XElement("TrueIdCategories", TrueIdCategories.Select(n => new XElement("Name", n))),
-                new XElement("TrueIdProperties", TrueIdProperties.Select(n => new XElement("Name", n)))
+                new XElement("TrueIdProperties", TrueIdProperties.Select(n => new XElement("Name", n))),
+                new XElement("ModelIdCategories", ModelIdCategories.Select(n => new XElement("Name", n)))
             );
 
             var directory = Path.GetDirectoryName(path);

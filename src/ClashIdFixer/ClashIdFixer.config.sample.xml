@@ -39,4 +39,17 @@
     <Name>ID</Name>
     <Name>ИД</Name>
   </TrueIdProperties>
+
+  <!--
+    Категории свойств модели, в которых лежит тот же id, что пишет отчёт
+    (вкладка "ID Объекта", внутренне LcRevitId). По ним среди одинаково
+    названных элементов выбирается именно тот экземпляр, в который попала
+    коллизия.
+  -->
+  <ModelIdCategories>
+    <Name>LcRevitId</Name>
+    <Name>ID объекта</Name>
+    <Name>ИД объекта</Name>
+    <Name>Object ID</Name>
+  </ModelIdCategories>
 </ClashIdFixerConfig>

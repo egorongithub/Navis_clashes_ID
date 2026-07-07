@@ -91,7 +91,8 @@ namespace ClashIdFixer.Plugin
                 message.AppendLine(string.Format("Элементов коллизий в отчёте: {0}", result.ClashObjectCount));
                 message.AppendLine(string.Format("Найдено в открытой модели: {0}", result.PathResolved));
                 message.AppendLine(string.Format("Id заменён на \"Объект/Id\": {0}", result.IdReplaced));
-                message.AppendLine(string.Format("Id уже правильный (замена не нужна): {0}", result.AlreadyCorrect));
+                message.AppendLine(string.Format("Id уже правильный (не тронут): {0}", result.AlreadyCorrect));
+                message.AppendLine(string.Format("Путь неоднозначен, элемент не опознан (не тронут): {0}", result.Ambiguous));
                 message.AppendLine(string.Format("Свойство \"Объект/Id\" не найдено вверх по дереву: {0}", result.TrueIdNotFound));
                 message.AppendLine(string.Format("В отчёте нет атрибута с ID (см. настройки): {0}", result.NoIdAttribute));
                 message.AppendLine(string.Format("Не найдено в модели по пути из отчёта: {0}", result.PathUnresolved));
