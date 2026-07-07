@@ -9,14 +9,31 @@
   <OutputFolder></OutputFolder>
 
   <!--
-    Запасной список типов узлов, считающихся "объектом" (правильным выбором).
-    Основная проверка - флаг API ModelItem.IsComposite, этот список нужен
-    только для файлов, где флаг не выставлен.
+    Имена атрибутов (objectattribute/smarttag) в стандартном отчёте, значение
+    которых является Id элемента и подлежит проверке/замене. В стандартном
+    русском отчёте это "ID объекта".
   -->
-  <ObjectNodeTypes>
-    <NodeType>Composite Object</NodeType>
-    <NodeType>Insert Group</NodeType>
-    <NodeType>Составной объект</NodeType>
-    <NodeType>Группа вставки</NodeType>
-  </ObjectNodeTypes>
+  <ReportIdAttributeNames>
+    <Name>ID объекта</Name>
+    <Name>ИД объекта</Name>
+    <Name>Object ID</Name>
+    <Name>Object Id</Name>
+  </ReportIdAttributeNames>
+
+  <!--
+    Где лежит истинный Id: вкладка свойств "Объект", графа "Id" (есть только
+    у элемента "правильного выбора"). Проверяются все сочетания
+    категория x свойство, и по отображаемым, и по внутренним именам.
+  -->
+  <TrueIdCategories>
+    <Name>Объект</Name>
+    <Name>Item</Name>
+    <Name>Элемент</Name>
+    <Name>Element</Name>
+  </TrueIdCategories>
+  <TrueIdProperties>
+    <Name>Id</Name>
+    <Name>ID</Name>
+    <Name>ИД</Name>
+  </TrueIdProperties>
 </ClashIdFixerConfig>

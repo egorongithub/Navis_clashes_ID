@@ -4,6 +4,7 @@ using System.Linq;
 using System.Xml;
 using System.Xml.Linq;
 using Autodesk.Navisworks.Api;
+using ClashIdFixer.Config;
 
 namespace ClashIdFixer.Core
 {
@@ -12,33 +13,34 @@ namespace ClashIdFixer.Core
         public int ClashObjectCount;
         public int PathResolved;
         public int PathUnresolved;
-        public int AlreadyObject;
-        public int PromotedToObject;
-        public int NoObjectLevel;
+        public int AlreadyCorrect;
+        public int IdReplaced;
+        public int TrueIdNotFound;
+        public int NoIdAttribute;
         public int ValuesReplaced;
         public string OutputFile;
     }
 
     /// <summary>
-    /// Takes a standard Clash Detective XML report (written by the user from the
-    /// Clash Detective "Отчёт" tab, with whatever content settings they chose) and
-    /// replaces, for every clash object, the values that belong to the geometry
-    /// sub-object with the corresponding values of its composite-object parent -
-    /// the "correct selection" level. The report structure, settings and every
-    /// field the user configured stay exactly as Clash Detective wrote them; only
-    /// the values are substituted.
+    /// Patches a standard Clash Detective XML report. For every clash object the
+    /// report carries an id attribute (e.g. "ID объекта" / value) taken from the
+    /// geometry sub-object. The true element id lives in the "Объект" properties
+    /// tab, "Id" row, which only exists at the real-object level. So: resolve the
+    /// report path to a ModelItem, walk up the tree to the first node that HAS
+    /// the "Объект/Id" property, and if its value differs from what the report
+    /// says - write the true value into the report. Ids that already match are
+    /// left untouched. Nothing else in the report is modified.
     /// </summary>
     public static class ReportPostProcessor
     {
         private sealed class ItemMapping
         {
-            public ModelItem SourceItem;          // what the report's path points at
-            public ModelItem ObjectItem;          // its composite-object ancestor (may equal SourceItem, may be null)
-            public Dictionary<string, string> Replacements; // old display value -> object-level display value
+            public ModelItem SourceItem;
+            public string TrueId;
         }
 
         public static FixReportResult Fix(Document document, string inputXmlPath, string outputXmlPath,
-            IList<string> fallbackNodeTypes, Action<int, int> progress)
+            ClashIdFixerConfig config, Action<int, int> progress)
         {
             var result = new FixReportResult();
 
@@ -63,6 +65,13 @@ namespace ClashIdFixer.Core
                 index++;
                 if (progress != null) progress(index, clashObjects.Count);
 
+                var idValueElements = FindReportIdValues(clashObject, config.ReportIdAttributeNames);
+                if (idValueElements.Count == 0)
+                {
+                    result.NoIdAttribute++;
+                    continue;
+                }
+
                 var pathNodes = ExtractPathNodes(clashObject);
                 if (pathNodes.Count == 0)
                 {
@@ -74,7 +83,10 @@ namespace ClashIdFixer.Core
                 ItemMapping mapping;
                 if (!mappingCache.TryGetValue(cacheKey, out mapping))
                 {
-                    mapping = BuildMapping(document, pathNodes, fallbackNodeTypes);
+                    mapping = new ItemMapping();
+                    mapping.SourceItem = ResolveByPath(document, pathNodes);
+                    if (mapping.SourceItem != null)
+                        mapping.TrueId = FindTrueId(mapping.SourceItem, config);
                     mappingCache[cacheKey] = mapping;
                 }
 
@@ -85,19 +97,24 @@ namespace ClashIdFixer.Core
                 }
                 result.PathResolved++;
 
-                if (mapping.ObjectItem == null)
+                if (string.IsNullOrEmpty(mapping.TrueId))
                 {
-                    result.NoObjectLevel++;
-                    continue;
-                }
-                if (ReferenceEquals(mapping.ObjectItem, mapping.SourceItem) || mapping.Replacements.Count == 0)
-                {
-                    result.AlreadyObject++;
+                    result.TrueIdNotFound++;
                     continue;
                 }
 
-                result.PromotedToObject++;
-                result.ValuesReplaced += SubstituteValues(clashObject, mapping.Replacements);
+                bool replacedAny = false;
+                foreach (var valueElement in idValueElements)
+                {
+                    if (!string.Equals(valueElement.Value.Trim(), mapping.TrueId.Trim(), StringComparison.Ordinal))
+                    {
+                        valueElement.Value = mapping.TrueId;
+                        result.ValuesReplaced++;
+                        replacedAny = true;
+                    }
+                }
+
+                if (replacedAny) result.IdReplaced++; else result.AlreadyCorrect++;
             }
 
             xdoc.Save(outputXmlPath);
@@ -106,10 +123,35 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// The standard report stores each clash object's location in the selection
-        /// tree as &lt;pathlink&gt;...&lt;path&gt;&lt;node&gt;File.nwc&lt;/node&gt;&lt;node&gt;...&lt;/node&gt;...
-        /// Nodes are collected by local name so namespaces/prefixes don't matter.
+        /// Collects the &lt;value&gt; elements of every objectattribute/smarttag of
+        /// the clash object whose &lt;name&gt; is one of the configured id names
+        /// ("ID объекта" in the standard Russian report).
         /// </summary>
+        private static List<XElement> FindReportIdValues(XElement clashObject, IList<string> idAttributeNames)
+        {
+            var found = new List<XElement>();
+
+            var entries = clashObject.Descendants().Where(e =>
+                string.Equals(e.Name.LocalName, "objectattribute", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(e.Name.LocalName, "smarttag", StringComparison.OrdinalIgnoreCase));
+
+            foreach (var entry in entries)
+            {
+                XElement nameElement = null, valueElement = null;
+                foreach (var child in entry.Elements())
+                {
+                    if (string.Equals(child.Name.LocalName, "name", StringComparison.OrdinalIgnoreCase)) nameElement = child;
+                    else if (string.Equals(child.Name.LocalName, "value", StringComparison.OrdinalIgnoreCase)) valueElement = child;
+                }
+                if (nameElement == null || valueElement == null) continue;
+
+                string name = nameElement.Value.Trim();
+                if (idAttributeNames.Any(n => string.Equals(n.Trim(), name, StringComparison.OrdinalIgnoreCase)))
+                    found.Add(valueElement);
+            }
+            return found;
+        }
+
         private static List<string> ExtractPathNodes(XElement clashObject)
         {
             return clashObject.Descendants()
@@ -118,47 +160,61 @@ namespace ClashIdFixer.Core
                 .ToList();
         }
 
-        private static ItemMapping BuildMapping(Document document, List<string> pathNodes, IList<string> fallbackNodeTypes)
-        {
-            var mapping = new ItemMapping { Replacements = new Dictionary<string, string>(StringComparer.Ordinal) };
-
-            mapping.SourceItem = ResolveByPath(document, pathNodes);
-            if (mapping.SourceItem == null) return mapping;
-
-            mapping.ObjectItem = ObjectResolver.FindObjectLevel(mapping.SourceItem, fallbackNodeTypes);
-            if (mapping.ObjectItem == null || ReferenceEquals(mapping.ObjectItem, mapping.SourceItem)) return mapping;
-
-            mapping.Replacements = BuildReplacementMap(mapping.SourceItem, mapping.ObjectItem);
-            return mapping;
-        }
-
         /// <summary>
-        /// Walks the selection tree by display names, level by level. Keeps every
-        /// candidate at each level (duplicate names are common), so the walk only
-        /// commits at the end. Returns null when the path cannot be followed -
-        /// typically because a different model is open than the one the report was
-        /// written from.
+        /// Resolves a report path to a ModelItem. The report prefixes the path
+        /// with a generic "Файл"/"File" node and includes the container NWD level
+        /// (e.g. Файл &gt; model.nwd &gt; part.nwc &gt; layer &gt; ...), while the
+        /// open document's roots may sit at any of those levels - so the anchor
+        /// point is searched: the first path node that matches a root wins, and
+        /// the rest of the path is walked down by display names from there. As a
+        /// last resort the walk is tried from the roots' children, for reports
+        /// whose leading nodes don't name any root at all.
         /// </summary>
         private static ModelItem ResolveByPath(Document document, List<string> pathNodes)
         {
-            var candidates = new List<ModelItem>();
-            foreach (Model model in document.Models)
+            var roots = document.Models.OfType<Model>()
+                .Where(m => m.RootItem != null)
+                .Select(m => m.RootItem)
+                .ToList();
+            if (roots.Count == 0) return null;
+
+            for (int offset = 0; offset < pathNodes.Count; offset++)
             {
-                if (model.RootItem == null) continue;
-                if (NamesMatch(model.RootItem.DisplayName, pathNodes[0]))
-                    candidates.Add(model.RootItem);
+                var anchored = roots.Where(r => NamesMatch(r.DisplayName, pathNodes[offset])).Cast<ModelItem>().ToList();
+                if (anchored.Count == 0) continue;
+
+                var item = WalkDown(anchored, pathNodes, offset + 1);
+                if (item != null) return item;
             }
 
-            // Single-model fallback: accept the only root even if the report spells
-            // the file name differently (path prefix, changed extension, etc.).
-            if (candidates.Count == 0)
+            for (int offset = 0; offset < pathNodes.Count; offset++)
             {
-                var roots = document.Models.OfType<Model>()
-                    .Where(m => m.RootItem != null).Select(m => m.RootItem).ToList();
-                if (roots.Count == 1) candidates.Add(roots[0]);
+                var anchored = new List<ModelItem>();
+                foreach (var root in roots)
+                {
+                    foreach (ModelItem child in root.Children)
+                    {
+                        if (NamesMatch(child.DisplayName, pathNodes[offset]))
+                            anchored.Add(child);
+                    }
+                }
+                if (anchored.Count == 0) continue;
+
+                var item = WalkDown(anchored, pathNodes, offset + 1);
+                if (item != null) return item;
             }
 
-            for (int level = 1; level < pathNodes.Count && candidates.Count > 0; level++)
+            return null;
+        }
+
+        /// <summary>
+        /// Walks the remaining path levels strictly; keeps all candidates at each
+        /// level (duplicate names are common) and only succeeds if the whole path
+        /// is consumed.
+        /// </summary>
+        private static ModelItem WalkDown(List<ModelItem> candidates, List<string> pathNodes, int startLevel)
+        {
+            for (int level = startLevel; level < pathNodes.Count; level++)
             {
                 var next = new List<ModelItem>();
                 foreach (var candidate in candidates)
@@ -169,9 +225,9 @@ namespace ClashIdFixer.Core
                             next.Add(child);
                     }
                 }
+                if (next.Count == 0) return null;
                 candidates = next;
             }
-
             return candidates.Count > 0 ? candidates[0] : null;
         }
 
@@ -181,8 +237,7 @@ namespace ClashIdFixer.Core
             string b = (reportName ?? "").Trim();
             if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
 
-            // Report sometimes carries the file name with a different extension /
-            // without one; compare the stems too, but only when both look like names.
+            // The file name may be spelled with a different / missing extension.
             if (a.Length > 0 && b.Length > 0)
             {
                 string sa = StripExtension(a);
@@ -202,114 +257,52 @@ namespace ClashIdFixer.Core
         }
 
         /// <summary>
-        /// Builds the value substitution table: for every property of the SOURCE
-        /// sub-object whose display value is unique among that item's properties,
-        /// look the same property up on the OBJECT-level item; if it exists there
-        /// with a different non-empty value, map old -> new. The report is then
-        /// patched purely by value matching, so it works for whatever columns and
-        /// smart tags the user configured in Clash Detective - element ids, GUIDs,
-        /// item names alike. Non-unique values (e.g. "0.000" shared by several
-        /// numeric properties) are skipped as ambiguous rather than guessed at.
+        /// The true element id: the "Id" row of the "Объект" properties tab, which
+        /// exists only at the real-object level. Climbs from the resolved item up
+        /// through its parents and returns the first such value found. Category and
+        /// property names are configurable (both display and internal names are
+        /// tried) to survive localization differences.
         /// </summary>
-        private static Dictionary<string, string> BuildReplacementMap(ModelItem sourceItem, ModelItem objectItem)
+        private static string FindTrueId(ModelItem item, ClashIdFixerConfig config)
         {
-            var valueCount = new Dictionary<string, int>(StringComparer.Ordinal);
-            var valueToProp = new Dictionary<string, PropRef>(StringComparer.Ordinal);
-
-            foreach (PropertyCategory category in sourceItem.PropertyCategories)
+            for (var current = item; current != null; current = current.Parent)
             {
-                foreach (DataProperty property in category.Properties)
+                foreach (var categoryName in config.TrueIdCategories)
                 {
-                    string value = SafeDisplayString(property);
-                    if (string.IsNullOrEmpty(value)) continue;
-
-                    int count;
-                    valueCount.TryGetValue(value, out count);
-                    valueCount[value] = count + 1;
-                    if (count == 0)
+                    foreach (var propertyName in config.TrueIdProperties)
                     {
-                        valueToProp[value] = new PropRef
-                        {
-                            CategoryName = category.Name,
-                            CategoryDisplayName = category.DisplayName,
-                            PropertyName = property.Name,
-                            PropertyDisplayName = property.DisplayName
-                        };
+                        var property = FindProperty(current, categoryName, propertyName);
+                        if (property == null) continue;
+
+                        string value = null;
+                        try { value = property.Value.ToDisplayString(); }
+                        catch { }
+
+                        if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
                     }
                 }
             }
-
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var pair in valueToProp)
-            {
-                if (valueCount[pair.Key] != 1) continue; // ambiguous on the source item
-
-                var newProperty = FindProperty(objectItem, pair.Value);
-                if (newProperty == null) continue;
-
-                string newValue = SafeDisplayString(newProperty);
-                if (string.IsNullOrEmpty(newValue) || newValue == pair.Key) continue;
-
-                map[pair.Key] = newValue;
-            }
-            return map;
+            return null;
         }
 
-        private sealed class PropRef
-        {
-            public string CategoryName;
-            public string CategoryDisplayName;
-            public string PropertyName;
-            public string PropertyDisplayName;
-        }
-
-        private static DataProperty FindProperty(ModelItem item, PropRef propRef)
+        private static DataProperty FindProperty(ModelItem item, string categoryName, string propertyName)
         {
             try
             {
-                var byName = item.PropertyCategories.FindPropertyByName(propRef.CategoryName, propRef.PropertyName);
-                if (byName != null) return byName;
+                var byDisplay = item.PropertyCategories.FindPropertyByDisplayName(categoryName, propertyName);
+                if (byDisplay != null) return byDisplay;
             }
             catch
             {
             }
             try
             {
-                return item.PropertyCategories.FindPropertyByDisplayName(propRef.CategoryDisplayName, propRef.PropertyDisplayName);
+                return item.PropertyCategories.FindPropertyByName(categoryName, propertyName);
             }
             catch
             {
                 return null;
             }
-        }
-
-        private static string SafeDisplayString(DataProperty property)
-        {
-            try { return property.Value.ToDisplayString(); }
-            catch { return null; }
-        }
-
-        /// <summary>
-        /// Rewrites the text of every &lt;value&gt; element inside the clash object
-        /// (these carry objectattribute and smarttag values in the standard report)
-        /// whose current content matches a source-item property value.
-        /// </summary>
-        private static int SubstituteValues(XElement clashObject, Dictionary<string, string> replacements)
-        {
-            int replaced = 0;
-            var valueElements = clashObject.Descendants()
-                .Where(e => string.Equals(e.Name.LocalName, "value", StringComparison.OrdinalIgnoreCase));
-
-            foreach (var valueElement in valueElements)
-            {
-                string newValue;
-                if (replacements.TryGetValue(valueElement.Value, out newValue))
-                {
-                    valueElement.Value = newValue;
-                    replaced++;
-                }
-            }
-            return replaced;
         }
     }
 }

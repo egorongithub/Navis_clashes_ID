@@ -16,16 +16,34 @@ namespace ClashIdFixer.Config
         /// <summary>Empty = the user's Downloads folder.</summary>
         public string OutputFolder = "";
 
-        // Fallback list only: the primary composite-object check is the
-        // ModelItem.IsComposite API flag. These node-type names (compared against
-        // the LcOaNode/LcOaNodeIcon constant) are consulted for files where that
-        // flag is not set; both English and Russian spellings are accepted.
-        public List<string> ObjectNodeTypes = new List<string>
+        // objectattribute/smarttag names in the report whose value is the element
+        // id to be checked and, when wrong, replaced. "ID объекта" is what the
+        // standard Russian report writes; English variants included for safety.
+        public List<string> ReportIdAttributeNames = new List<string>
         {
-            "Composite Object",
-            "Insert Group",
-            "Составной объект",
-            "Группа вставки",
+            "ID объекта",
+            "ИД объекта",
+            "Object ID",
+            "Object Id",
+        };
+
+        // Where the TRUE element id lives: the "Объект" properties tab, "Id" row
+        // (exists only at the real-object level). Both display and internal names
+        // are tried for every category/property combination, so extra entries are
+        // cheap and localization-proof.
+        public List<string> TrueIdCategories = new List<string>
+        {
+            "Объект",
+            "Item",
+            "Элемент",
+            "Element",
+        };
+
+        public List<string> TrueIdProperties = new List<string>
+        {
+            "Id",
+            "ID",
+            "ИД",
         };
 
         public static string GetDefaultPath(string pluginDirectory)
@@ -62,23 +80,34 @@ namespace ClashIdFixer.Config
             var cfg = new ClashIdFixerConfig();
 
             cfg.OutputFolder = (string)root.Element("OutputFolder") ?? cfg.OutputFolder;
-
-            var nodeTypesEl = root.Element("ObjectNodeTypes");
-            if (nodeTypesEl != null)
-            {
-                var list = nodeTypesEl.Elements("NodeType").Select(e => e.Value.Trim())
-                    .Where(s => s.Length > 0).ToList();
-                if (list.Count > 0) cfg.ObjectNodeTypes = list;
-            }
+            ReadList(root, "ReportIdAttributeNames", "Name", cfg.ReportIdAttributeNames);
+            ReadList(root, "TrueIdCategories", "Name", cfg.TrueIdCategories);
+            ReadList(root, "TrueIdProperties", "Name", cfg.TrueIdProperties);
 
             return cfg;
+        }
+
+        private static void ReadList(XElement root, string listName, string itemName, List<string> target)
+        {
+            var listEl = root.Element(listName);
+            if (listEl == null) return;
+
+            var items = listEl.Elements(itemName).Select(e => e.Value.Trim())
+                .Where(s => s.Length > 0).ToList();
+            if (items.Count > 0)
+            {
+                target.Clear();
+                target.AddRange(items);
+            }
         }
 
         public void Save(string path)
         {
             var root = new XElement("ClashIdFixerConfig",
                 new XElement("OutputFolder", OutputFolder),
-                new XElement("ObjectNodeTypes", ObjectNodeTypes.Select(t => new XElement("NodeType", t)))
+                new XElement("ReportIdAttributeNames", ReportIdAttributeNames.Select(n => new XElement("Name", n))),
+                new XElement("TrueIdCategories", TrueIdCategories.Select(n => new XElement("Name", n))),
+                new XElement("TrueIdProperties", TrueIdProperties.Select(n => new XElement("Name", n)))
             );
 
             var directory = Path.GetDirectoryName(path);

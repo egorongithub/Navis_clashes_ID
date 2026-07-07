@@ -68,7 +68,6 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Config\ClashIdFixerConfig.cs" />
     <Compile Include="Core\KnownFolders.cs" />
-    <Compile Include="Core\ObjectResolver.cs" />
     <Compile Include="Core\ReportPostProcessor.cs" />
     <Compile Include="UI\ProgressForm.cs" />
     <Compile Include="Plugin\FixReportCommand.cs" />

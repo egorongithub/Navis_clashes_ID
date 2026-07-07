@@ -65,7 +65,7 @@ namespace ClashIdFixer.Plugin
                     progress.Show();
                     progress.SetMarquee("Чтение отчёта: " + Path.GetFileName(inputFile));
 
-                    result = ReportPostProcessor.Fix(document, inputFile, outputFile, config.ObjectNodeTypes,
+                    result = ReportPostProcessor.Fix(document, inputFile, outputFile, config,
                         (current, total) =>
                         {
                             if (current % 20 == 0 || current == total)
@@ -80,9 +80,10 @@ namespace ClashIdFixer.Plugin
                 var message = new StringBuilder();
                 message.AppendLine(string.Format("Элементов коллизий в отчёте: {0}", result.ClashObjectCount));
                 message.AppendLine(string.Format("Найдено в открытой модели: {0}", result.PathResolved));
-                message.AppendLine(string.Format("Заменены значения на объект (правильный выбор): {0}", result.PromotedToObject));
-                message.AppendLine(string.Format("Уже указывали на объект (замена не нужна): {0}", result.AlreadyObject));
-                message.AppendLine(string.Format("Объект уровня \"составной\" не найден выше по дереву: {0}", result.NoObjectLevel));
+                message.AppendLine(string.Format("Id заменён на \"Объект/Id\": {0}", result.IdReplaced));
+                message.AppendLine(string.Format("Id уже правильный (замена не нужна): {0}", result.AlreadyCorrect));
+                message.AppendLine(string.Format("Свойство \"Объект/Id\" не найдено вверх по дереву: {0}", result.TrueIdNotFound));
+                message.AppendLine(string.Format("В отчёте нет атрибута с ID (см. настройки): {0}", result.NoIdAttribute));
                 message.AppendLine(string.Format("Не найдено в модели по пути из отчёта: {0}", result.PathUnresolved));
                 message.AppendLine(string.Format("Всего заменено значений: {0}", result.ValuesReplaced));
                 message.AppendLine();
