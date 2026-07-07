@@ -44,6 +44,8 @@ namespace ClashIdFixer.Config
             "Id",
             "ID",
             "ИД",
+            "Ид",
+            "Идентификатор",
         };
 
         public static string GetDefaultPath(string pluginDirectory)

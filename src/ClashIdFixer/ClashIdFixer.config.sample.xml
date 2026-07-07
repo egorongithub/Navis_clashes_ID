@@ -35,5 +35,7 @@
     <Name>Id</Name>
     <Name>ID</Name>
     <Name>ИД</Name>
+    <Name>Ид</Name>
+    <Name>Идентификатор</Name>
   </TrueIdProperties>
 </ClashIdFixerConfig>

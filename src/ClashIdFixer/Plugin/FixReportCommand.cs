@@ -60,6 +60,7 @@ namespace ClashIdFixer.Plugin
                     Path.GetFileNameWithoutExtension(inputFile) + "_fixed.xml");
 
                 FixReportResult result;
+                var diagnostics = new StringBuilder();
                 using (var progress = new ProgressForm("ClashIdFixer — исправление ID в отчёте"))
                 {
                     progress.Show();
@@ -72,9 +73,18 @@ namespace ClashIdFixer.Plugin
                                 progress.SetProgress(
                                     string.Format("Обработка элементов коллизий: {0} из {1}", current, total),
                                     current, total);
-                        });
+                        },
+                        diagnostics);
 
                     progress.Close();
+                }
+
+                string diagFile = null;
+                if (diagnostics.Length > 0)
+                {
+                    diagFile = Path.Combine(outputFolder,
+                        Path.GetFileNameWithoutExtension(inputFile) + "_diag.txt");
+                    File.WriteAllText(diagFile, diagnostics.ToString(), Encoding.UTF8);
                 }
 
                 var message = new StringBuilder();
@@ -88,6 +98,13 @@ namespace ClashIdFixer.Plugin
                 message.AppendLine(string.Format("Всего заменено значений: {0}", result.ValuesReplaced));
                 message.AppendLine();
                 message.AppendLine("Файл: " + result.OutputFile);
+
+                if (diagFile != null)
+                {
+                    message.AppendLine();
+                    message.AppendLine("Создан файл диагностики с реальными именами категорий/свойств и путей:");
+                    message.AppendLine(diagFile);
+                }
 
                 if (result.PathUnresolved > 0 && result.PathResolved == 0)
                 {

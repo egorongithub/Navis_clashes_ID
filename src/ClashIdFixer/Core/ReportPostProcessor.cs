@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using Autodesk.Navisworks.Api;
@@ -39,10 +40,16 @@ namespace ClashIdFixer.Core
             public string TrueId;
         }
 
+        // How many unique problem cases get a full dump in the diagnostics file -
+        // enough to identify the real category/property/tree names without
+        // producing a megabyte log on a large report.
+        private const int MaxDiagnosedCases = 8;
+
         public static FixReportResult Fix(Document document, string inputXmlPath, string outputXmlPath,
-            ClashIdFixerConfig config, Action<int, int> progress)
+            ClashIdFixerConfig config, Action<int, int> progress, StringBuilder diagnostics)
         {
             var result = new FixReportResult();
+            int diagnosedPaths = 0, diagnosedNoId = 0;
 
             XDocument xdoc;
             var readerSettings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, XmlResolver = null };
@@ -88,6 +95,21 @@ namespace ClashIdFixer.Core
                     if (mapping.SourceItem != null)
                         mapping.TrueId = FindTrueId(mapping.SourceItem, config);
                     mappingCache[cacheKey] = mapping;
+
+                    if (diagnostics != null)
+                    {
+                        if (mapping.SourceItem == null && diagnosedPaths < MaxDiagnosedCases)
+                        {
+                            diagnosedPaths++;
+                            DiagnosePath(document, pathNodes, diagnostics);
+                        }
+                        else if (mapping.SourceItem != null && string.IsNullOrEmpty(mapping.TrueId)
+                                 && diagnosedNoId < MaxDiagnosedCases)
+                        {
+                            diagnosedNoId++;
+                            DescribeAncestors(mapping.SourceItem, diagnostics);
+                        }
+                    }
                 }
 
                 if (mapping.SourceItem == null)
@@ -303,6 +325,129 @@ namespace ClashIdFixer.Core
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Written to the _diag.txt file when a report path cannot be found in the
+        /// open model: shows the report path, the document roots, where the walk
+        /// stopped and what children were actually available at that level.
+        /// </summary>
+        private static void DiagnosePath(Document document, List<string> pathNodes, StringBuilder diag)
+        {
+            diag.AppendLine("=== ПУТЬ ИЗ ОТЧЁТА НЕ НАЙДЕН В МОДЕЛИ ===");
+            diag.AppendLine("Путь из отчёта: " + string.Join(" > ", pathNodes));
+
+            var roots = document.Models.OfType<Model>()
+                .Where(m => m.RootItem != null)
+                .Select(m => m.RootItem)
+                .ToList();
+            diag.AppendLine("Корни открытого документа: " +
+                string.Join(" | ", roots.Select(r => "\"" + (r.DisplayName ?? "") + "\"")));
+
+            int anchorOffset = -1;
+            List<ModelItem> candidates = null;
+            for (int offset = 0; offset < pathNodes.Count && anchorOffset < 0; offset++)
+            {
+                var anchored = roots.Where(r => NamesMatch(r.DisplayName, pathNodes[offset])).Cast<ModelItem>().ToList();
+                if (anchored.Count > 0)
+                {
+                    anchorOffset = offset;
+                    candidates = anchored;
+                }
+            }
+            if (anchorOffset < 0)
+            {
+                for (int offset = 0; offset < pathNodes.Count && anchorOffset < 0; offset++)
+                {
+                    var anchored = new List<ModelItem>();
+                    foreach (var root in roots)
+                        foreach (ModelItem child in root.Children)
+                            if (NamesMatch(child.DisplayName, pathNodes[offset]))
+                                anchored.Add(child);
+                    if (anchored.Count > 0)
+                    {
+                        anchorOffset = offset;
+                        candidates = anchored;
+                    }
+                }
+            }
+
+            if (anchorOffset < 0)
+            {
+                diag.AppendLine("Ни один узел пути не совпал ни с корнями документа, ни с их детьми.");
+                diag.AppendLine();
+                return;
+            }
+
+            diag.AppendLine(string.Format("Привязка: узел[{0}] = \"{1}\", кандидатов: {2}",
+                anchorOffset, pathNodes[anchorOffset], candidates.Count));
+
+            for (int level = anchorOffset + 1; level < pathNodes.Count; level++)
+            {
+                var next = new List<ModelItem>();
+                foreach (var candidate in candidates)
+                    foreach (ModelItem child in candidate.Children)
+                        if (NamesMatch(child.DisplayName, pathNodes[level]))
+                            next.Add(child);
+
+                if (next.Count == 0)
+                {
+                    diag.AppendLine(string.Format("СТОП на узле[{0}] = \"{1}\": совпадений нет.", level, pathNodes[level]));
+                    var childNames = candidates
+                        .SelectMany(c => c.Children.Cast<ModelItem>())
+                        .Select(c => c.DisplayName ?? "(без имени)")
+                        .Distinct()
+                        .Take(25)
+                        .ToList();
+                    diag.AppendLine("Реальные дети на этом уровне: " + string.Join(" | ", childNames));
+                    diag.AppendLine();
+                    return;
+                }
+                candidates = next;
+            }
+
+            diag.AppendLine("(весь путь прошёл - элемент должен находиться)");
+            diag.AppendLine();
+        }
+
+        /// <summary>
+        /// Written to the _diag.txt file when the item was found but no
+        /// "Объект/Id" property exists up the chain: dumps every category and
+        /// property (display name, internal name, value) of the item and its
+        /// parents, so the correct names can be copied straight into
+        /// ClashIdFixer.config.xml.
+        /// </summary>
+        private static void DescribeAncestors(ModelItem item, StringBuilder diag)
+        {
+            diag.AppendLine("=== ЭЛЕМЕНТ НАЙДЕН, НО СВОЙСТВО С ИСТИННЫМ ID НЕ НАЙДЕНО ===");
+            diag.AppendLine("Все категории/свойства элемента и его родителей (снизу вверх):");
+
+            int depth = 0;
+            for (var current = item; current != null && depth < 8; current = current.Parent, depth++)
+            {
+                diag.AppendLine(string.Format("[{0}] \"{1}\"", depth, current.DisplayName ?? "(без имени)"));
+                try
+                {
+                    foreach (PropertyCategory category in current.PropertyCategories)
+                    {
+                        diag.AppendLine(string.Format("    Категория \"{0}\" [{1}]:",
+                            category.DisplayName ?? "", category.Name ?? ""));
+                        foreach (DataProperty property in category.Properties)
+                        {
+                            string value;
+                            try { value = property.Value.ToDisplayString(); }
+                            catch { value = "(не читается)"; }
+                            diag.AppendLine(string.Format("        \"{0}\" [{1}] = {2}",
+                                property.DisplayName ?? "", property.Name ?? "", value));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diag.AppendLine("    (ошибка чтения свойств: " + ex.Message + ")");
+                }
+            }
+            diag.AppendLine();
         }
     }
 }
