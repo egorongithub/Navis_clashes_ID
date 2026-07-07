@@ -74,7 +74,16 @@ namespace ClashIdFixer.Core
                 .ToList();
             result.ClashObjectCount = clashObjects.Count;
 
-            // Path candidates are cached per unique path; decisions per (path, id).
+            // Report coordinates are in the units declared on <exchange>; the API
+            // works in Navisworks internal units (meters).
+            double unitScale = 1.0;
+            if (xdoc.Root != null)
+            {
+                var unitsAttr = xdoc.Root.Attribute("units");
+                if (unitsAttr != null) unitScale = UnitsToMeters(unitsAttr.Value);
+            }
+
+            // Path candidates are cached per unique path; decisions per (path, id, point).
             var candidatesCache = new Dictionary<string, List<ModelItem>>(StringComparer.Ordinal);
             var decisionCache = new Dictionary<string, Decision>(StringComparer.Ordinal);
 
@@ -100,8 +109,15 @@ namespace ClashIdFixer.Core
                     continue;
                 }
 
+                double px, py, pz;
+                bool hasPoint = TryGetClashPoint(clashObject, unitScale, out px, out py, out pz);
+
                 string pathKey = string.Join("\n", pathNodes);
-                string decisionKey = pathKey + "\n#id=" + reportedId;
+                string decisionKey = pathKey + "\n#id=" + reportedId + (hasPoint
+                    ? "\n#pt=" + px.ToString("F3", CultureInfo.InvariantCulture)
+                        + ";" + py.ToString("F3", CultureInfo.InvariantCulture)
+                        + ";" + pz.ToString("F3", CultureInfo.InvariantCulture)
+                    : "");
 
                 Decision decision;
                 if (!decisionCache.TryGetValue(decisionKey, out decision))
@@ -113,7 +129,7 @@ namespace ClashIdFixer.Core
                         candidatesCache[pathKey] = candidates;
                     }
 
-                    decision = Decide(candidates, reportedId, config);
+                    decision = Decide(candidates, reportedId, hasPoint, px, py, pz, config);
                     decisionCache[decisionKey] = decision;
 
                     if (diagnostics != null)
@@ -131,7 +147,7 @@ namespace ClashIdFixer.Core
                         else if (decision.Kind == DecisionKind.Ambiguous && diagnosedAmbiguous < MaxDiagnosedCases)
                         {
                             diagnosedAmbiguous++;
-                            DescribeAmbiguity(candidates, pathNodes, reportedId, config, diagnostics);
+                            DescribeAmbiguity(candidates, pathNodes, reportedId, hasPoint, px, py, pz, config, diagnostics);
                         }
                     }
                 }
@@ -179,73 +195,190 @@ namespace ClashIdFixer.Core
             return result;
         }
 
+        // A clash point must essentially touch the element it identifies; these
+        // limits (meters) only reject nonsense matches when bounding boxes fail
+        // or the point lands far from every candidate.
+        private const double PointLimitConfirmed = 5.0;
+        private const double PointLimitUnconfirmed = 0.5;
+
         /// <summary>
         /// Chooses what to do with one report entry given all model items whose
         /// tree path matches the report path.
+        ///
+        /// Same-type neighbours share both the tree path and (for nested families)
+        /// the geometry-level id, so neither alone identifies the instance. The
+        /// clash point does: the right element is the one whose geometry the point
+        /// actually touches. Ids are only compared within a candidate's own
+        /// segment (leaf up to its element node), never on shared ancestors.
         /// </summary>
-        private static Decision Decide(List<ModelItem> candidates, string reportedId, ClashIdFixerConfig config)
+        private static Decision Decide(List<ModelItem> candidates, string reportedId,
+            bool hasPoint, double px, double py, double pz, ClashIdFixerConfig config)
         {
             if (candidates == null || candidates.Count == 0)
                 return new Decision { Kind = DecisionKind.PathNotFound };
 
-            var trueIds = new List<string>(candidates.Count);
+            var items = new List<ModelItem>();
+            var ids = new List<string>();
             foreach (var candidate in candidates)
             {
                 string trueId = FindTrueId(candidate, config);
-                trueIds.Add(trueId);
 
                 // The reported id IS some candidate's true id - report is correct.
                 if (trueId != null && string.Equals(trueId, reportedId, StringComparison.Ordinal))
                     return new Decision { Kind = DecisionKind.AlreadyCorrect };
-            }
 
-            // The reported id is a geometry-level id: find the instance that
-            // carries it and take that instance's true id.
-            for (int i = 0; i < candidates.Count; i++)
+                if (trueId != null)
+                {
+                    items.Add(candidate);
+                    ids.Add(trueId);
+                }
+            }
+            if (items.Count == 0)
+                return new Decision { Kind = DecisionKind.TrueIdMissing };
+
+            // Keep only candidates whose own segment carries the reported id, when
+            // there are any - the id then confirms at least the right sub-family.
+            var pool = new List<int>();
+            for (int i = 0; i < items.Count; i++)
             {
-                if (trueIds[i] == null) continue;
-                if (ChainHasModelId(candidates[i], reportedId, config))
-                    return new Decision { Kind = DecisionKind.Replace, TrueId = trueIds[i] };
+                if (SegmentHasModelId(items[i], reportedId, config)) pool.Add(i);
+            }
+            bool idConfirmed = pool.Count > 0;
+            if (!idConfirmed)
+            {
+                for (int i = 0; i < items.Count; i++) pool.Add(i);
             }
 
-            // No candidate carries the reported id at all. Only safe when the path
-            // pins down a single element anyway.
-            var distinct = trueIds.Where(t => t != null).Distinct().ToList();
+            var distinct = pool.Select(i => ids[i]).Distinct().ToList();
             if (distinct.Count == 1)
                 return new Decision { Kind = DecisionKind.Replace, TrueId = distinct[0] };
-            if (distinct.Count == 0)
-                return new Decision { Kind = DecisionKind.TrueIdMissing };
+
+            if (hasPoint)
+            {
+                int best = -1;
+                double bestDistance = double.MaxValue;
+                foreach (var i in pool)
+                {
+                    double distance = DistanceToBoundingBox(items[i], px, py, pz);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = i;
+                    }
+                }
+
+                double limit = idConfirmed ? PointLimitConfirmed : PointLimitUnconfirmed;
+                if (best >= 0 && bestDistance <= limit)
+                    return new Decision { Kind = DecisionKind.Replace, TrueId = ids[best] };
+            }
 
             return new Decision { Kind = DecisionKind.Ambiguous };
         }
 
         /// <summary>
         /// True when the reported id appears among the values of the geometry-id
-        /// categories ("ID объекта" / LcRevitId) on the item or any of its parents.
+        /// categories ("ID объекта" / LcRevitId) within the candidate's own
+        /// segment: from the leaf up to and including the first node that has the
+        /// true-id property (the element). Nodes above the element are shared with
+        /// neighbouring same-type elements, so matching there would misidentify.
         /// </summary>
-        private static bool ChainHasModelId(ModelItem item, string reportedId, ClashIdFixerConfig config)
+        private static bool SegmentHasModelId(ModelItem item, string reportedId, ClashIdFixerConfig config)
         {
             for (var current = item; current != null; current = current.Parent)
             {
-                try
-                {
-                    foreach (PropertyCategory category in current.PropertyCategories)
-                    {
-                        if (!MatchesAnyName(category, config.ModelIdCategories)) continue;
-
-                        foreach (DataProperty property in category.Properties)
-                        {
-                            string value = VariantToString(property.Value);
-                            if (value != null && string.Equals(value.Trim(), reportedId, StringComparison.Ordinal))
-                                return true;
-                        }
-                    }
-                }
-                catch
-                {
-                }
+                if (NodeHasModelId(current, reportedId, config)) return true;
+                if (TrueIdOwn(current, config) != null) return false;
             }
             return false;
+        }
+
+        private static bool NodeHasModelId(ModelItem item, string reportedId, ClashIdFixerConfig config)
+        {
+            try
+            {
+                foreach (PropertyCategory category in item.PropertyCategories)
+                {
+                    if (!MatchesAnyName(category, config.ModelIdCategories)) continue;
+
+                    foreach (DataProperty property in category.Properties)
+                    {
+                        string value = VariantToString(property.Value);
+                        if (value != null && string.Equals(value.Trim(), reportedId, StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
+        private static double DistanceToBoundingBox(ModelItem item, double px, double py, double pz)
+        {
+            try
+            {
+                var box = item.BoundingBox();
+                if (box == null) return double.MaxValue;
+
+                double dx = Math.Max(0.0, Math.Max(box.Min.X - px, px - box.Max.X));
+                double dy = Math.Max(0.0, Math.Max(box.Min.Y - py, py - box.Max.Y));
+                double dz = Math.Max(0.0, Math.Max(box.Min.Z - pz, pz - box.Max.Z));
+                return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            catch
+            {
+                return double.MaxValue;
+            }
+        }
+
+        private static bool TryGetClashPoint(XElement clashObject, double unitScale,
+            out double px, out double py, out double pz)
+        {
+            px = py = pz = 0;
+
+            var clashResult = clashObject.Ancestors()
+                .FirstOrDefault(a => string.Equals(a.Name.LocalName, "clashresult", StringComparison.OrdinalIgnoreCase));
+            if (clashResult == null) return false;
+
+            var position = clashResult.Descendants().FirstOrDefault(e =>
+                string.Equals(e.Name.LocalName, "pos3f", StringComparison.OrdinalIgnoreCase) &&
+                e.Parent != null &&
+                string.Equals(e.Parent.Name.LocalName, "clashpoint", StringComparison.OrdinalIgnoreCase));
+            if (position == null) return false;
+
+            if (!TryReadAttribute(position, "x", out px)) return false;
+            if (!TryReadAttribute(position, "y", out py)) return false;
+            if (!TryReadAttribute(position, "z", out pz)) return false;
+
+            px *= unitScale;
+            py *= unitScale;
+            pz *= unitScale;
+            return true;
+        }
+
+        private static bool TryReadAttribute(XElement element, string name, out double value)
+        {
+            value = 0;
+            var attribute = element.Attribute(name);
+            return attribute != null && double.TryParse(attribute.Value,
+                NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static double UnitsToMeters(string units)
+        {
+            if (string.IsNullOrWhiteSpace(units)) return 1.0;
+            switch (units.Trim().ToLowerInvariant())
+            {
+                case "m": case "meter": case "meters": return 1.0;
+                case "mm": case "millimeter": case "millimeters": return 0.001;
+                case "cm": case "centimeter": case "centimeters": return 0.01;
+                case "km": case "kilometer": case "kilometers": return 1000.0;
+                case "ft": case "foot": case "feet": return 0.3048;
+                case "in": case "inch": case "inches": return 0.0254;
+                case "yd": case "yard": case "yards": return 0.9144;
+                default: return 1.0;
+            }
         }
 
         private static bool MatchesAnyName(PropertyCategory category, IList<string> names)
@@ -417,16 +550,24 @@ namespace ClashIdFixer.Core
         {
             for (var current = item; current != null; current = current.Parent)
             {
-                foreach (var categoryName in config.TrueIdCategories)
-                {
-                    foreach (var propertyName in config.TrueIdProperties)
-                    {
-                        var property = FindProperty(current, categoryName, propertyName);
-                        if (property == null) continue;
+                string value = TrueIdOwn(current, config);
+                if (value != null) return value;
+            }
+            return null;
+        }
 
-                        string value = VariantToString(property.Value);
-                        if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
-                    }
+        /// <summary>The true-id property of THIS node only (no climbing).</summary>
+        private static string TrueIdOwn(ModelItem item, ClashIdFixerConfig config)
+        {
+            foreach (var categoryName in config.TrueIdCategories)
+            {
+                foreach (var propertyName in config.TrueIdProperties)
+                {
+                    var property = FindProperty(item, categoryName, propertyName);
+                    if (property == null) continue;
+
+                    string value = VariantToString(property.Value);
+                    if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
                 }
             }
             return null;
@@ -607,54 +748,34 @@ namespace ClashIdFixer.Core
         /// true id and the geometry ids found on its chain.
         /// </summary>
         private static void DescribeAmbiguity(List<ModelItem> candidates, List<string> pathNodes,
-            string reportedId, ClashIdFixerConfig config, StringBuilder diag)
+            string reportedId, bool hasPoint, double px, double py, double pz,
+            ClashIdFixerConfig config, StringBuilder diag)
         {
-            diag.AppendLine("=== ПУТЬ НЕОДНОЗНАЧЕН, ID ИЗ ОТЧЁТА НЕ НАЙДЕН НИ У ОДНОГО КАНДИДАТА ===");
+            diag.AppendLine("=== ЭЛЕМЕНТ НЕ ОПОЗНАН ОДНОЗНАЧНО ===");
             diag.AppendLine("Путь из отчёта: " + string.Join(" > ", pathNodes));
             diag.AppendLine("Id из отчёта: " + reportedId);
+            diag.AppendLine(hasPoint
+                ? string.Format(CultureInfo.InvariantCulture, "Точка коллизии (м): {0:F3}; {1:F3}; {2:F3}", px, py, pz)
+                : "Точка коллизии в отчёте отсутствует.");
             diag.AppendLine("Кандидатов по пути: " + candidates.Count);
 
-            foreach (var candidate in candidates.Take(6))
+            foreach (var candidate in candidates.Take(8))
             {
                 string trueId = FindTrueId(candidate, config) ?? "(нет)";
-                var chainIds = CollectModelIds(candidate, config).Take(10).ToList();
-                diag.AppendLine(string.Format("  Кандидат \"{0}\": Объект/Id = {1}; ID объекта по цепочке: {2}",
-                    candidate.DisplayName ?? "(без имени)", trueId,
-                    chainIds.Count > 0 ? string.Join(", ", chainIds) : "(нет)"));
+                bool segment = SegmentHasModelId(candidate, reportedId, config);
+                string distance = "(нет точки)";
+                if (hasPoint)
+                {
+                    double d = DistanceToBoundingBox(candidate, px, py, pz);
+                    distance = d == double.MaxValue
+                        ? "(бокс недоступен)"
+                        : d.ToString("F3", CultureInfo.InvariantCulture) + " м";
+                }
+                diag.AppendLine(string.Format("  Кандидат \"{0}\": Объект/Id = {1}; id в сегменте: {2}; расстояние до точки: {3}",
+                    candidate.DisplayName ?? "(без имени)", trueId, segment ? "да" : "нет", distance));
             }
             diag.AppendLine();
         }
 
-        private static IEnumerable<string> CollectModelIds(ModelItem item, ClashIdFixerConfig config)
-        {
-            for (var current = item; current != null; current = current.Parent)
-            {
-                List<string> values = null;
-                try
-                {
-                    foreach (PropertyCategory category in current.PropertyCategories)
-                    {
-                        if (!MatchesAnyName(category, config.ModelIdCategories)) continue;
-                        foreach (DataProperty property in category.Properties)
-                        {
-                            string value = VariantToString(property.Value);
-                            if (!string.IsNullOrWhiteSpace(value))
-                            {
-                                if (values == null) values = new List<string>();
-                                values.Add(value.Trim());
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                }
-
-                if (values != null)
-                {
-                    foreach (var value in values) yield return value;
-                }
-            }
-        }
     }
 }
