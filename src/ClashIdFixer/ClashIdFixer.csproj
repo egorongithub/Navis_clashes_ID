@@ -77,13 +77,35 @@
 
   <ItemGroup>
     <!--
-      Ribbon layout and button icons for the "BIM УП" tab must be embedded
-      resources of the plugin assembly - Navisworks resolves the names from
-      RibbonLayout/Command attributes against embedded resources.
+      Ribbon layout ("BIM УП" tab) and its display-name strings. Navisworks
+      loads these as LOOSE FILES from a locale subfolder next to the DLL
+      (NOT embedded), so they are copied to bin\...\en-US and bin\...\ru-RU.
+      The ru-RU copy makes a Russian-language Navisworks find them in its own
+      locale folder; en-US is the fallback.
     -->
-    <EmbeddedResource Include="Resources\BimUpRibbon.xaml" />
-    <EmbeddedResource Include="Resources\FixId16.png" />
-    <EmbeddedResource Include="Resources\FixId32.png" />
+    <None Include="en-US\ClashIdFixer.xaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="en-US\ClashIdFixer.name">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="ru-RU\ClashIdFixer.xaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="ru-RU\ClashIdFixer.name">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+
+    <!--
+      Button icons - also loose files, referenced by the Command attribute as
+      a path relative to the plugin folder (Resources\FixId16.png).
+    -->
+    <Content Include="Resources\FixId16.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\FixId32.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <!--

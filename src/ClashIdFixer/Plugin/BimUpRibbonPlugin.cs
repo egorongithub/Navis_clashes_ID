@@ -3,21 +3,32 @@ using Autodesk.Navisworks.Api.Plugins;
 namespace ClashIdFixer.Plugin
 {
     /// <summary>
-    /// Own ribbon tab "BIM УП" with the fix-report button. The ribbon layout
-    /// (BimUpRibbon.xaml) and the button icons are embedded resources of this
-    /// assembly. A fallback copy of the command also lives on the Add-ins tab
-    /// (see <see cref="FixReportCommand"/>) in case ribbon loading is blocked
-    /// on some install.
+    /// Own ribbon tab "BIM УП" with the fix-report button.
+    ///
+    /// Navisworks resolves the ribbon layout, the display-name strings and the
+    /// icons as LOOSE FILES next to the plugin DLL (NOT embedded resources):
+    ///   &lt;plugin dir&gt;\en-US\ClashIdFixer.xaml   (RibbonLayout)
+    ///   &lt;plugin dir&gt;\en-US\ClashIdFixer.name   (Strings)
+    ///   &lt;plugin dir&gt;\Resources\FixId16/32.png  (Command icons)
+    /// A ru-RU copy of the xaml/name is shipped too, so a Russian-language
+    /// Navisworks finds them in its own locale folder as well as via the en-US
+    /// fallback. LoadForCanExecute forces the plugin to load at start-up so the
+    /// tab is present immediately. A fallback copy of the command also lives on
+    /// the Add-ins tab (see <see cref="FixReportCommand"/>).
     /// </summary>
     [Plugin("ClashIdFixer.BimUp", "EGRN",
         DisplayName = "BIM УП",
         ToolTip = "Инструменты BIM УП")]
-    [RibbonLayout("BimUpRibbon.xaml")]
-    [RibbonTab("ID_BIMUP_TAB", DisplayName = "BIM УП")]
+    [Strings("ClashIdFixer.name")]
+    [RibbonLayout("ClashIdFixer.xaml")]
+    [RibbonTab("ID_BIMUP_TAB",
+        DisplayName = "BIM УП",
+        LoadForCanExecute = true)]
     [Command("ID_BIMUP_FIXREPORT",
+        LoadForCanExecute = true,
         DisplayName = "Исправить ID\nв отчёте",
-        Icon = "FixId16.png",
-        LargeIcon = "FixId32.png",
+        Icon = "Resources\\FixId16.png",
+        LargeIcon = "Resources\\FixId32.png",
         ToolTip = "Заменить в XML-отчёте Clash Detective Id подобъектов на Id элементов (вкладка \"Объект\", графа \"Id\")")]
     public class BimUpRibbonPlugin : CommandHandlerPlugin
     {

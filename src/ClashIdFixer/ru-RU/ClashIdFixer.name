@@ -1,0 +1,18 @@
+# Local names for ribbon tab, panel, and controls
+$utf8
+
+DisplayName=
+BIM УП
+
+ID_BIMUP_TAB.DisplayName=
+BIM УП
+
+ID_BIMUP_FIXREPORT.DisplayName=
+Исправить ID
+в отчёте
+
+ID_BIMUP_FIXREPORT.ToolTip=
+Заменить в XML-отчёте Clash Detective Id подобъектов на Id элементов (вкладка "Объект", графа "Id")
+
+ID_BIMUP_FIXREPORT.ExtendedToolTip=
+Выберите стандартный XML-отчёт Clash Detective. Плагин найдёт элементы в открытой модели и запишет в отчёт корректные Id уровня объекта.

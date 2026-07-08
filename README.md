@@ -95,13 +95,40 @@
    (по умолчанию `C:\Program Files\Autodesk\Navisworks Manage 2022\`), либо
    переменной окружения `NAVISWORKS_2022_DIR`, либо параметром
    `msbuild /p:NavisworksInstallDir=...`.
-3. Собрать **Release** → `bin\Release\ClashIdFixer.dll`.
+3. Собрать **Release**. В `bin\Release\` появятся `ClashIdFixer.dll`, а также
+   папки `en-US\`, `ru-RU\` и `Resources\` с файлами ленты и иконок.
 
 ## Установка
 
-Скопировать `ClashIdFixer.dll` в
-`C:\Program Files\Autodesk\Navisworks Manage 2022\Plugins\ClashIdFixer\` и
-перезапустить Navisworks. Кнопка появится на вкладке **Add-ins**.
+ВАЖНО: для появления вкладки ленты «BIM УП» файлы ленты (XAML, .name) и
+иконки должны лежать рядом с DLL в строго определённой структуре — Navisworks
+загружает их как отдельные файлы, а не из самой DLL. Скопируйте **всё
+содержимое** `bin\Release\` в папку плагина, сохранив структуру:
+
+```
+C:\Program Files\Autodesk\Navisworks Manage 2022\Plugins\ClashIdFixer\
+    ClashIdFixer.dll
+    en-US\ClashIdFixer.xaml
+    en-US\ClashIdFixer.name
+    ru-RU\ClashIdFixer.xaml
+    ru-RU\ClashIdFixer.name
+    Resources\FixId16.png
+    Resources\FixId32.png
+```
+
+Требования (иначе вкладка не появится, хотя запасная кнопка на Add-ins
+работать будет):
+
+- Имя папки плагина должно совпадать с именем DLL — `ClashIdFixer`.
+- Подпапки `en-US` / `ru-RU` и `Resources` обязательны и лежат рядом с DLL.
+- `.name`-файл сохранён в кодировке UTF-8 (в нём есть кириллица).
+
+Перезапустите Navisworks. Появятся вкладка **«BIM УП»** с кнопкой
+«Исправить ID в отчёте» и запасная кнопка на вкладке **Add-ins**.
+
+Если вкладка «BIM УП» всё равно не появилась, а кнопка на Add-ins работает —
+значит Navisworks не нашёл файлы ленты: проверьте структуру папок выше
+(частая ошибка — скопирована только DLL без папок `en-US` / `Resources`).
 
 При обновлении со старой версии плагина удалите лежащий рядом с DLL старый
 `ClashIdFixer.config.xml` — он пересоздастся с актуальными настройками.
