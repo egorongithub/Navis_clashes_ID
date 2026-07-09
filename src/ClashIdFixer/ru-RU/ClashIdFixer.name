@@ -8,8 +8,7 @@ ID_BIMUP_TAB.DisplayName=
 BIM УП
 
 ID_BIMUP_FIXREPORT.DisplayName=
-Исправить ID
-в отчёте
+Исправить ID в отчёте
 
 ID_BIMUP_FIXREPORT.ToolTip=
 Заменить в XML-отчёте Clash Detective Id подобъектов на Id элементов (вкладка "Объект", графа "Id")
