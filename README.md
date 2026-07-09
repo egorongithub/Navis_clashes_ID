@@ -133,6 +133,32 @@ C:\Program Files\Autodesk\Navisworks Manage 2022\Plugins\ClashIdFixer\
 При обновлении со старой версии плагина удалите лежащий рядом с DLL старый
 `ClashIdFixer.config.xml` — он пересоздастся с актуальными настройками.
 
+## Передача коллегам
+
+Коллегам исходники и сборка не нужны — только содержимое `bin\Release\`:
+
+1. Соберите Release и упакуйте ZIP со структурой:
+   ```
+   install.cmd                  (из папки deploy/ репозитория)
+   ClashIdFixer\                (всё содержимое bin\Release\)
+       ClashIdFixer.dll
+       en-US\...  ru-RU\...  Resources\...
+   ```
+2. Коллега распаковывает ZIP и запускает `install.cmd` **от имени
+   администратора** — скрипт копирует папку в
+   `C:\Program Files\Autodesk\Navisworks Manage 2022\Plugins\ClashIdFixer\`.
+   (Или копирует папку туда вручную — результат тот же.)
+3. Перезапустить Navisworks — появится вкладка «BIM УП».
+
+Права администратора нужны только на копирование в Program Files.
+Настройки плагин хранит per-user: `%APPDATA%\ClashIdFixer\ClashIdFixer.config.xml`
+(создаётся при первом запуске; файл рядом с DLL, если он есть, имеет
+приоритет — удобно для централизованной настройки).
+
+Версия Navisworks должна совпадать: эта сборка — под 2022 (API-сборки
+подключаются из папки установки 2022). Для других версий нужна пересборка
+с соответствующим `NavisworksInstallDir`.
+
 ## Настройка
 
 `ClashIdFixer.config.xml` рядом с DLL (создаётся автоматически, образец —

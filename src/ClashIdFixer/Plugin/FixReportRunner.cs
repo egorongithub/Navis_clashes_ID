@@ -30,7 +30,7 @@ namespace ClashIdFixer.Plugin
                 }
 
                 string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                var config = ClashIdFixerConfig.LoadOrCreateDefault(ClashIdFixerConfig.GetDefaultPath(pluginDir));
+                var config = ClashIdFixerConfig.LoadOrCreateDefault(ClashIdFixerConfig.ResolveConfigPath(pluginDir));
 
                 string inputFile;
                 using (var dialog = new OpenFileDialog())

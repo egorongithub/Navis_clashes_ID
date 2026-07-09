@@ -61,9 +61,20 @@ namespace ClashIdFixer.Config
             "Object ID",
         };
 
-        public static string GetDefaultPath(string pluginDirectory)
+        /// <summary>
+        /// A config next to the DLL wins (admin-managed override), otherwise the
+        /// per-user file in %APPDATA% is used - the plugin folder usually lives
+        /// under Program Files, where a regular user cannot create files, so the
+        /// default config must not be written there.
+        /// </summary>
+        public static string ResolveConfigPath(string pluginDirectory)
         {
-            return Path.Combine(pluginDirectory, "ClashIdFixer.config.xml");
+            string local = Path.Combine(pluginDirectory, "ClashIdFixer.config.xml");
+            if (File.Exists(local)) return local;
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "ClashIdFixer", "ClashIdFixer.config.xml");
         }
 
         public static ClashIdFixerConfig LoadOrCreateDefault(string path)
@@ -71,7 +82,15 @@ namespace ClashIdFixer.Config
             if (!File.Exists(path))
             {
                 var def = new ClashIdFixerConfig();
-                def.Save(path);
+                try
+                {
+                    def.Save(path);
+                }
+                catch
+                {
+                    // No write access (e.g. Program Files without elevation) -
+                    // keep working on in-memory defaults.
+                }
                 return def;
             }
 
