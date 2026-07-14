@@ -53,12 +53,18 @@
     <Reference Include="System.Xml" />
 
     <!--
-      Managed API shipped with Navisworks Manage/Simulate 2022. Only the core
-      assembly is needed: the plugin reads the model tree and properties, all
-      clash data comes from the user's own XML report. No COM interop, no NuGet.
+      Managed API shipped with Navisworks Manage/Simulate 2022. The core
+      assembly gives the model tree and properties; Autodesk.Navisworks.Clash
+      gives the live Clash Detective results (DocumentClash.TestsData) used by
+      the api-mode button. No COM interop, no NuGet.
     -->
     <Reference Include="Autodesk.Navisworks.Api">
       <HintPath>$(NavisworksInstallDir)Autodesk.Navisworks.Api.dll</HintPath>
+      <Private>False</Private>
+      <SpecificVersion>False</SpecificVersion>
+    </Reference>
+    <Reference Include="Autodesk.Navisworks.Clash">
+      <HintPath>$(NavisworksInstallDir)Autodesk.Navisworks.Clash.dll</HintPath>
       <Private>False</Private>
       <SpecificVersion>False</SpecificVersion>
     </Reference>
@@ -69,9 +75,11 @@
     <Compile Include="Config\ClashIdFixerConfig.cs" />
     <Compile Include="Core\KnownFolders.cs" />
     <Compile Include="Core\ReportPostProcessor.cs" />
+    <Compile Include="Core\ClashApiPostProcessor.cs" />
     <Compile Include="UI\ProgressForm.cs" />
     <Compile Include="Plugin\FixReportRunner.cs" />
     <Compile Include="Plugin\FixReportCommand.cs" />
+    <Compile Include="Plugin\FixReportApiCommand.cs" />
     <Compile Include="Plugin\BimUpRibbonPlugin.cs" />
   </ItemGroup>
 

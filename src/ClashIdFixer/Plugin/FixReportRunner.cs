@@ -11,12 +11,28 @@ using ClashIdFixer.UI;
 namespace ClashIdFixer.Plugin
 {
     /// <summary>
-    /// The actual command logic, shared by the "BIM УП" ribbon button and the
-    /// fallback button on the Add-ins tab.
+    /// The actual command logic, shared by the "BIM УП" ribbon buttons and the
+    /// fallback buttons on the Add-ins tab. Two modes over the same summary /
+    /// errors-file plumbing:
+    ///  - path mode: elements are found in the model by the report's tree path
+    ///    (+ id + clash point) - works for any report, even for a foreign model;
+    ///  - api mode: report entries are matched to the LIVE Clash Detective
+    ///    results of the open document, elements come straight from the result -
+    ///    no path/geometry matching, but the open file must contain the tests.
     /// </summary>
     internal static class FixReportRunner
     {
         public static int Run()
+        {
+            return RunCore(false);
+        }
+
+        public static int RunApi()
+        {
+            return RunCore(true);
+        }
+
+        private static int RunCore(bool useClashApi)
         {
             try
             {
@@ -49,25 +65,33 @@ namespace ClashIdFixer.Plugin
                     : config.OutputFolder;
                 if (!Directory.Exists(outputFolder)) Directory.CreateDirectory(outputFolder);
 
+                // Separate suffixes so both modes can be run on the same report
+                // and compared side by side.
                 string baseName = Path.GetFileNameWithoutExtension(inputFile);
-                string outputFile = Path.Combine(outputFolder, baseName + "_fixed.xml");
+                string suffix = useClashApi ? "_fixed_api" : "_fixed";
+                string outputFile = Path.Combine(outputFolder, baseName + suffix + ".xml");
 
                 FixReportResult result;
                 var diagnostics = new StringBuilder();
-                using (var progress = new ProgressForm("ClashIdFixer — исправление ID в отчёте"))
+                string title = useClashApi
+                    ? "ClashIdFixer — исправление ID (через Clash Detective)"
+                    : "ClashIdFixer — исправление ID в отчёте";
+                using (var progress = new ProgressForm(title))
                 {
                     progress.Show();
                     progress.SetMarquee("Чтение отчёта: " + Path.GetFileName(inputFile));
 
-                    result = ReportPostProcessor.Fix(document, inputFile, outputFile, config,
-                        (current, total) =>
-                        {
-                            if (current % 20 == 0 || current == total)
-                                progress.SetProgress(
-                                    string.Format("Обработка элементов коллизий: {0} из {1}", current, total),
-                                    current, total);
-                        },
-                        diagnostics);
+                    Action<int, int> onProgress = (current, total) =>
+                    {
+                        if (current % 20 == 0 || current == total)
+                            progress.SetProgress(
+                                string.Format("Обработка записей отчёта: {0} из {1}", current, total),
+                                current, total);
+                    };
+
+                    result = useClashApi
+                        ? ClashApiPostProcessor.Fix(document, inputFile, outputFile, config, onProgress, diagnostics)
+                        : ReportPostProcessor.Fix(document, inputFile, outputFile, config, onProgress, diagnostics);
 
                     progress.Close();
                 }
@@ -77,7 +101,7 @@ namespace ClashIdFixer.Plugin
                 string errorsFile = null;
                 if (result.Errors.Count > 0)
                 {
-                    errorsFile = Path.Combine(outputFolder, baseName + "_errors.txt");
+                    errorsFile = Path.Combine(outputFolder, baseName + (useClashApi ? "_errors_api" : "_errors") + ".txt");
                     var errorsText = new StringBuilder();
                     errorsText.AppendLine("Отчёт: " + inputFile);
                     errorsText.AppendLine(result.UnitsSummary ?? "");
@@ -116,6 +140,14 @@ namespace ClashIdFixer.Plugin
             }
             catch (Exception ex)
             {
+                var invalid = ex as InvalidOperationException;
+                if (invalid != null)
+                {
+                    // Expected situations (no clash tests in the document, broken
+                    // config...) are reported as plain text, without a stack trace.
+                    MessageBox.Show(invalid.Message, "ClashIdFixer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return 1;
+                }
                 MessageBox.Show(ex.ToString(), "ClashIdFixer — ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }

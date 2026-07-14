@@ -15,3 +15,12 @@ ID_BIMUP_FIXREPORT.ToolTip=
 
 ID_BIMUP_FIXREPORT.ExtendedToolTip=
 Выберите стандартный XML-отчёт Clash Detective. Плагин найдёт элементы в открытой модели и запишет в отчёт корректные Id уровня объекта.
+
+ID_BIMUP_FIXREPORT_API.DisplayName=
+Исправить ID (Clash Detective)
+
+ID_BIMUP_FIXREPORT_API.ToolTip=
+Заменить Id в XML-отчёте по живым результатам Clash Detective открытого документа (без поиска по путям и координатам)
+
+ID_BIMUP_FIXREPORT_API.ExtendedToolTip=
+Записи отчёта сопоставляются с результатами Clash Detective по GUID и имени, элементы берутся напрямую из результата. В открытом файле должны быть сохранены тесты с результатами.

@@ -18,6 +18,12 @@
                                     ShowText="True"
                                     Orientation="Vertical"/>
 
+                <local:NWRibbonButton x:Uid="BimUpButton_2" Id="ID_BIMUP_FIXREPORT_API"
+                                    Size="Large"
+                                    KeyTip="B2"
+                                    ShowText="True"
+                                    Orientation="Vertical"/>
+
             </RibbonPanelSource>
         </RibbonPanel>
     </RibbonTab>

@@ -603,7 +603,7 @@ namespace ClashIdFixer.Core
             return false;
         }
 
-        private static List<XElement> FindReportIdValues(XElement clashObject, IList<string> idAttributeNames)
+        internal static List<XElement> FindReportIdValues(XElement clashObject, IList<string> idAttributeNames)
         {
             var found = new List<XElement>();
 
@@ -752,7 +752,7 @@ namespace ClashIdFixer.Core
         /// exists at the real-object level. Climbs from the item up through its
         /// parents and returns the first such value found.
         /// </summary>
-        private static string FindTrueId(ModelItem item, ClashIdFixerConfig config)
+        internal static string FindTrueId(ModelItem item, ClashIdFixerConfig config)
         {
             for (var current = item; current != null; current = current.Parent)
             {
@@ -917,7 +917,7 @@ namespace ClashIdFixer.Core
         /// property exists up the chain: dumps every category and property of the
         /// item and its parents so the correct names can be copied into the config.
         /// </summary>
-        private static void DescribeAncestors(ModelItem item, StringBuilder diag)
+        internal static void DescribeAncestors(ModelItem item, StringBuilder diag)
         {
             diag.AppendLine("=== ЭЛЕМЕНТ НАЙДЕН, НО СВОЙСТВО С ИСТИННЫМ ID НЕ НАЙДЕНО ===");
             diag.AppendLine("Все категории/свойства элемента и его родителей (снизу вверх):");

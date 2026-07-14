@@ -30,12 +30,20 @@ namespace ClashIdFixer.Plugin
         Icon = "Resources\\FixId16.png",
         LargeIcon = "Resources\\FixId32.png",
         ToolTip = "Заменить в XML-отчёте Clash Detective Id подобъектов на Id элементов (вкладка \"Объект\", графа \"Id\")")]
+    [Command("ID_BIMUP_FIXREPORT_API",
+        LoadForCanExecute = true,
+        DisplayName = "Исправить ID\n(Clash Detective)",
+        Icon = "Resources\\FixId16.png",
+        LargeIcon = "Resources\\FixId32.png",
+        ToolTip = "Заменить Id в XML-отчёте по живым результатам Clash Detective открытого документа (без поиска по путям и координатам)")]
     public class BimUpRibbonPlugin : CommandHandlerPlugin
     {
         public override int ExecuteCommand(string commandId, params string[] parameters)
         {
             if (commandId == "ID_BIMUP_FIXREPORT")
                 return FixReportRunner.Run();
+            if (commandId == "ID_BIMUP_FIXREPORT_API")
+                return FixReportRunner.RunApi();
             return 0;
         }
 
